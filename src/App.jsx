@@ -4,12 +4,14 @@ import {
   Trash2, Activity, CheckCircle2, XCircle, Clock, Wifi, WifiOff,
   X, AlertTriangle, Loader2, KeyRound, Check, FileBarChart, UserCircle2,
   TrendingUp, Building2, AlertOctagon, Unlock, RotateCcw, ShieldAlert,
-  Filter, ChevronDown, HardDrive, CalendarClock
+  Filter, ChevronDown, HardDrive, CalendarClock, Sun, Moon, Search
 } from "lucide-react";
 import {
   ResponsiveContainer, AreaChart, Area, BarChart, Bar, XAxis, YAxis, CartesianGrid,
   Tooltip, PieChart, Pie, Cell, Legend,
 } from "recharts";
+
+import "./styles/heartbeat.css";
 
 /* ------------------------------------------------------------------ */
 /* Design tokens — "vitals monitor" system                             */
@@ -17,348 +19,7 @@ import {
 /* a live waveform + a BPM-style number that actually reacts to real   */
 /* run-events, not a decorative pulse line.                            */
 /* ------------------------------------------------------------------ */
-const TOKENS = `
-@import url('https://fonts.googleapis.com/css2?family=DM+Sans:wght@400;500;600;700&family=Manrope:wght@600;700;800&family=JetBrains+Mono:wght@400;500;600&display=swap');
 
-:root { color-scheme: dark; }
-html, body, #root { margin: 0; min-height: 100%; }
-body { background: #07111f; }
-
-.hb-root {
-  --bg: #07111f;
-  --bg-elevated: #0b1728;
-  --surface: #0e1c2f;
-  --surface-2: #13243b;
-  --surface-3: #192c45;
-  --surface-glass: rgba(14, 28, 47, .82);
-  --border: #1e3551;
-  --border-hover: #2d4a6b;
-  --text: #edf4ff;
-  --text-muted: #8ea3bd;
-  --text-dim: #96aac2;
-  --accent: #3ED9BE;
-  --accent-strong: #22b99f;
-  --accent-dim: rgba(62,217,190,.12);
-  --accent-2: #7b8cff;
-  --success: #31d583;
-  --success-dim: rgba(49,213,131,.12);
-  --danger: #ff5d6c;
-  --danger-dim: rgba(255,93,108,.12);
-  --warning: #f6b65b;
-  --warning-dim: rgba(246,182,91,.12);
-  --font-display: 'Manrope', sans-serif;
-  --font-body: 'DM Sans', sans-serif;
-  --font-mono: 'JetBrains Mono', monospace;
-  --shadow-sm: 0 1px 2px rgba(0,0,0,.16), 0 6px 20px rgba(0,0,0,.12);
-  --shadow-md: 0 16px 40px rgba(0,0,0,.24);
-  background:
-    radial-gradient(900px 500px at 12% -10%, rgba(62,217,190,.06), transparent 62%),
-    radial-gradient(900px 600px at 95% 0%, rgba(123,140,255,.08), transparent 60%),
-    var(--bg);
-  color: var(--text);
-  font-family: var(--font-body);
-  min-height: 100vh;
-  width: 100%;
-}
-.hb-root * { box-sizing: border-box; }
-.hb-root ::selection { background: var(--accent-dim); }
-.hb-root button, .hb-root input, .hb-root select { font-family: inherit; }
-.hb-root button { cursor: pointer; }
-.hb-root :focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; border-radius: 6px; }
-.hb-scroll::-webkit-scrollbar { width: 7px; height: 7px; }
-.hb-scroll::-webkit-scrollbar-track { background: transparent; }
-.hb-scroll::-webkit-scrollbar-thumb { background: var(--border); border-radius: 10px; }
-.hb-eyebrow { font-size: 10px; letter-spacing: 1.35px; text-transform: uppercase; color: var(--text-dim); font-weight: 700; }
-.hb-row-hover { transition: background .16s ease, transform .16s ease; }
-.hb-row-hover:hover { background: rgba(255,255,255,.025); }
-.hb-card { transition: transform .18s ease, border-color .18s ease, box-shadow .18s ease; }
-.hb-card:hover { transform: translateY(-2px); border-color: var(--border-hover); box-shadow: var(--shadow-md); }
-
-.hb-app-shell {
-  height: 100vh;
-  display: flex;
-  overflow: hidden;
-}
-.hb-sidebar { width: 248px; flex: 0 0 248px; min-height: 100vh; position: sticky; top: 0; display: flex; flex-direction: column; background: rgba(8,20,35,.92); border-right: 1px solid var(--border); backdrop-filter: blur(18px); z-index: 20; transition: width .2s ease, flex-basis .2s ease; }
-.hb-sidebar.is-collapsed { width: 82px; flex-basis: 82px; }
-.hb-brand { padding: 20px 18px 18px; display: flex; align-items: center; gap: 11px; }
-.hb-brand-mark {
-  width: 36px;
-  height: 36px;
-  border-radius: 11px;
-  display: grid;
-  place-items: center;
-  flex: 0 0 auto;
-
-  background: transparent;
-  box-shadow: none;
-  overflow: hidden;
-}
-
-.hb-brand-logo {
-  width: 100%;
-  height: 100%;
-  object-fit: contain;
-  display: block;
-}.hb-sidebar-nav { flex: 1; overflow: auto; padding: 8px 12px; }
-.hb-nav-section { padding: 9px 10px 7px; }
-.hb-nav-item { width: 100%; display: flex; align-items: center; gap: 11px; min-height: 42px; padding: 7px 10px; border-radius: 11px; border: 1px solid transparent; background: transparent; color: var(--text-muted); font-size: 13px; font-weight: 600; text-align: left; transition: all .16s ease; }
-.hb-nav-item:hover { background: rgba(255,255,255,.035); color: var(--text); }
-.hb-nav-item.active { background: linear-gradient(90deg, rgba(62,217,190,.12), rgba(62,217,190,.035)); border-color: rgba(62,217,190,.16); color: var(--text); }
-.hb-nav-icon { width: 28px; height: 28px; border-radius: 8px; display: grid; place-items: center; flex: 0 0 auto; color: var(--text-dim); background: var(--surface-3); }
-.hb-nav-item.active .hb-nav-icon { color: var(--accent); background: var(--accent-dim); }
-.hb-sidebar-footer { padding: 12px; border-top: 1px solid var(--border); }
-.hb-profile { display: flex; align-items: center; gap: 10px; padding: 10px; border: 1px solid var(--border); background: rgba(255,255,255,.025); border-radius: 13px; }
-.hb-avatar { width: 32px; height: 32px; border-radius: 10px; display: grid; place-items: center; flex: 0 0 auto; background: var(--accent-dim); color: var(--accent); font: 700 11px var(--font-display); }
-.hb-shell-main {
-  flex: 1;
-  min-width: 0;
-  margin-left: 0;
-  height: 100vh;
-  overflow-y: auto;
-  overflow-x: hidden;
-  transition: margin-left .2s ease;
-}
-.hb-topbar { min-height: 72px; position: sticky; top: 0; z-index: 15; display: flex; align-items: center; justify-content: space-between; gap: 16px; padding: 12px clamp(18px,3vw,34px); background: rgba(7,17,31,.78); border-bottom: 1px solid rgba(30,53,81,.85); backdrop-filter: blur(18px); }
-.hb-topbar-left { display: flex; align-items: center; gap: 12px; min-width: 0; }
-.hb-page-title { font: 800 19px/1.1 var(--font-display); text-transform: capitalize; }
-.hb-page-meta { margin-top: 4px; color: var(--text-dim); font-size: 11.5px; }
-.hb-main-content { padding: clamp(18px,3vw,32px); }
-.hb-content-frame { max-width: 1600px; margin: 0 auto; }
-.hb-mobile-toggle { display: none; }
-.hb-mobile-nav { display: none; }
-.hb-status-chip { display: inline-flex; align-items: center; gap: 7px; border: 1px solid var(--border); background: rgba(14,28,47,.9); border-radius: 999px; padding: 6px 9px 6px 11px; }
-.hb-status-chip-label { color: var(--text-dim); font-size: 11px; }
-
-.hb-dashboard-hero { display:flex; justify-content:space-between; align-items:flex-end; gap:18px; padding: 6px 0 20px; }
-.hb-dashboard-title { margin:0; font: 800 clamp(25px,3vw,34px)/1.05 var(--font-display); letter-spacing:-.8px; }
-.hb-dashboard-subtitle { color: var(--text-muted); font-size: 13px; margin-top: 7px; }
-.hb-filter-bar { display:flex; align-items:center; gap:8px; flex-wrap:wrap; padding:7px; border:1px solid var(--border); border-radius:14px; background:rgba(14,28,47,.72); box-shadow:var(--shadow-sm); }
-.hb-filter-label { color:var(--text-dim); font-size:11px; font-weight:700; text-transform:uppercase; letter-spacing:.8px; padding:0 5px; }
-.hb-stat-grid { display:grid; grid-template-columns:repeat(4,minmax(0,1fr)); gap:12px; }
-.hb-stat-card { min-width:0; padding:18px; border:1px solid var(--border); border-radius:16px; background:linear-gradient(180deg,rgba(14,28,47,.96),rgba(11,23,40,.96)); box-shadow:var(--shadow-sm); }
-.hb-section-heading { display:flex; justify-content:space-between; align-items:center; gap:12px; margin: 22px 0 10px; }
-.hb-section-title { font: 700 13px var(--font-display); }
-.hb-section-subtitle { color:var(--text-dim); font-size:11px; }
-.hb-panel { border:1px solid var(--border); border-radius:16px; background:rgba(14,28,47,.9); box-shadow:var(--shadow-sm); overflow:hidden; }
-.hb-panel-header { padding:14px 17px; border-bottom:1px solid var(--border); display:flex; align-items:center; justify-content:space-between; gap:10px; }
-.hb-panel-title { font:700 13.5px var(--font-display); }
-
-@keyframes hb-pulse-dot { 0%,100% { opacity:1; } 50% { opacity:.45; } }
-@keyframes hb-flow { from { transform:translateX(0); } to { transform:translateX(-50%); } }
-@keyframes hb-flash { 0% { background:var(--accent-dim); } 100% { background:transparent; } }
-@keyframes hb-spin { to { transform:rotate(360deg); } }
-@keyframes hb-rise { from { opacity:0; transform:translateY(6px); } to { opacity:1; transform:translateY(0); } }
-@keyframes hb-glow { 0%,100% { opacity:.55; } 50% { opacity:1; } }
-@keyframes hb-skeleton { 0% { background-position:-200px 0; } 100% { background-position:200px 0; } }
-@keyframes hb-soft-pulse { 0%,100% { box-shadow: 0 0 0 0 rgba(62,217,190,.00), var(--shadow-sm); } 50% { box-shadow: 0 0 0 1px rgba(62,217,190,.18), 0 12px 38px rgba(62,217,190,.08); } }
-@keyframes hb-border-scan { 0% { transform:translateX(-110%); opacity:0; } 18% { opacity:.8; } 50% { opacity:.9; } 82% { opacity:.8; } 100% { transform:translateX(110%); opacity:0; } }
-@keyframes hb-ecg-beat { 0%, 70%, 100% { transform:scaleY(1); } 74% { transform:scaleY(1.05); } 78% { transform:scaleY(.98); } }
-.hb-command-grid { display:grid; grid-template-columns:minmax(0,1.65fr) minmax(300px,.85fr); gap:14px; align-items:stretch; }
-.hb-command-card { position:relative; overflow:hidden; border:1px solid var(--border); background:linear-gradient(145deg,rgba(14,28,47,.96),rgba(9,20,34,.96)); border-radius:18px; box-shadow:var(--shadow-sm); }
-.hb-command-card::after { content:""; position:absolute; top:0; left:-35%; width:35%; height:1px; background:linear-gradient(90deg,transparent,var(--accent),transparent); animation:hb-border-scan 5.5s ease-in-out infinite; opacity:.5; }
-.hb-glow-card { animation:hb-soft-pulse 4.5s ease-in-out infinite; }
-.hb-glow-card:hover { transform:translateY(-3px); border-color:rgba(62,217,190,.35); box-shadow:0 18px 42px rgba(0,0,0,.28),0 0 28px rgba(62,217,190,.08); }
-.hb-live-ecg { height:46px; overflow:hidden; border-radius:12px; background:rgba(3,12,22,.5); border:1px solid rgba(62,217,190,.1); position:relative; }
-.hb-live-ecg::before { content:""; position:absolute; inset:0; background:linear-gradient(90deg,rgba(62,217,190,.03),transparent 30%,rgba(62,217,190,.05)); pointer-events:none; }
-.hb-mini-kpi-grid { display:grid; grid-template-columns:repeat(3,minmax(0,1fr)); gap:10px; }
-.hb-mini-kpi { padding:14px 15px; border:1px solid var(--border); border-radius:14px; background:rgba(19,36,59,.72); transition:transform .18s ease,border-color .18s ease,box-shadow .18s ease; }
-.hb-mini-kpi:hover { transform:translateY(-2px); border-color:var(--border-hover); box-shadow:0 12px 30px rgba(0,0,0,.22); }
-.hb-section-rule { display:flex; align-items:center; gap:10px; margin:24px 0 10px; }
-.hb-section-rule::after { content:""; height:1px; flex:1; background:linear-gradient(90deg,var(--border),transparent); }
-@media (max-width: 980px) { .hb-command-grid { grid-template-columns:1fr; } }
-@media (max-width: 680px) { .hb-mini-kpi-grid { grid-template-columns:1fr; } }
-
-
-/* ------------------------------------------------------------------ */
-/* Dashboard V3 — asymmetric live operations architecture            */
-/* ------------------------------------------------------------------ */
-.hb-dashboard-v3 { max-width: 1600px; margin: 0 auto; }
-.hb-dashboard-intro { display:flex; justify-content:space-between; align-items:flex-end; gap:24px; padding:4px 0 22px; }
-.hb-v3-title { margin:7px 0 0; font:800 clamp(27px,3vw,38px)/1.04 var(--font-display); letter-spacing:-1px; }
-.hb-v3-subtitle { max-width:690px; margin:9px 0 0; color:var(--text-muted); font-size:13px; line-height:1.55; }
-.hb-v3-controls { display:flex; align-items:center; justify-content:flex-end; gap:8px; flex-wrap:wrap; }
-
-.hb-heartbeat-bar { position: relative; height: 22px; overflow: hidden; margin-bottom: 8px; display: flex; align-items: center; }
-.hb-heartbeat-svg { display: block; animation-name: hb-flow-ltr; animation-timing-function: linear; animation-iteration-count: infinite; transition: opacity .3s ease; }
-@keyframes hb-flow-ltr { from { transform: translateX(-50%); } to { transform: translateX(0); } }
-.hb-heartbeat-dot { animation: hb-glow 1.6s ease-in-out infinite; }
-.hb-heartbeat-rate {
-  position: absolute; right: 0; top: 50%; transform: translateY(-50%);
-  display: flex; align-items: center; gap: 6px;
-  font: 600 10.5px var(--font-mono); color: var(--text-dim);
-  background: var(--bg); padding-left: 10px;
-}
-.hb-heartbeat-rate-dot { width: 6px; height: 6px; border-radius: 50%; }
-@media (prefers-reduced-motion: reduce) { .hb-heartbeat-svg { animation: none; opacity: .35; } }
-
-.hb-connection-pill { display:inline-flex; align-items:center; gap:7px; padding:8px 11px; border:1px solid var(--border); border-radius:999px; background:rgba(14,28,47,.72); color:var(--text-muted); font:600 11px var(--font-mono); }
-.hb-connection-dot { width:7px; height:7px; border-radius:50%; display:inline-block; }
-.hb-connection-dot.live { background:var(--success); box-shadow:0 0 0 4px var(--success-dim); animation:hb-pulse-dot 1.6s ease-in-out infinite; }
-.hb-connection-dot.offline { background:var(--text-dim); }
-.hb-section-date,.hb-section-hint { color:var(--text-dim); font:500 10px var(--font-mono); margin-left:auto; }
-.hb-today-grid { display:grid; grid-template-columns:1.2fr 1fr 1fr 1fr; gap:12px; }
-.hb-dash-metric { position:relative; overflow:hidden; min-height:150px; padding:18px 19px; border:1px solid var(--border); border-radius:17px; background:linear-gradient(145deg,rgba(14,28,47,.98),rgba(9,20,34,.98)); box-shadow:var(--shadow-sm); transition:transform .22s ease,border-color .22s ease,box-shadow .22s ease; animation:hb-rise .42s ease both; }
-.hb-dash-metric:nth-child(2){animation-delay:.04s}.hb-dash-metric:nth-child(3){animation-delay:.08s}.hb-dash-metric:nth-child(4){animation-delay:.12s}
-.hb-dash-metric::before { content:""; position:absolute; width:110px; height:110px; right:-48px; bottom:-55px; border-radius:50%; background:currentColor; opacity:.055; }
-.hb-dash-metric:hover { transform:translateY(-4px); border-color:var(--border-hover); box-shadow:0 18px 38px rgba(0,0,0,.26),0 0 28px rgba(62,217,190,.045); }
-.hb-dash-metric.is-live { box-shadow:0 0 0 1px rgba(246,182,91,.12),var(--shadow-sm); }
-.hb-dash-metric.is-live::after { content:""; position:absolute; left:0; right:0; top:0; height:1px; background:linear-gradient(90deg,transparent,currentColor,transparent); animation:hb-border-scan 3.8s ease-in-out infinite; opacity:.65; }
-.hb-dash-metric-top { display:flex; align-items:center; gap:8px; }
-.hb-metric-icon { width:32px; height:32px; display:grid; place-items:center; border-radius:10px; background:rgba(255,255,255,.035); border:1px solid rgba(255,255,255,.045); }
-.hb-dash-metric-value { margin-top:20px; font:700 clamp(30px,3vw,40px)/1 var(--font-mono); letter-spacing:-1.5px; }
-.hb-dash-metric-note { margin-top:8px; color:var(--text-dim); font-size:11px; }
-.hb-pulse-panel { position:relative; margin-top:14px; padding:18px; overflow:hidden; border:1px solid rgba(62,217,190,.2); border-radius:19px; background:linear-gradient(135deg,rgba(10,25,42,.98),rgba(12,30,48,.92)); box-shadow:0 18px 45px rgba(0,0,0,.18),0 0 45px rgba(62,217,190,.045); }
-.hb-pulse-panel::before { content:""; position:absolute; inset:-1px; border-radius:20px; padding:1px; background:linear-gradient(100deg,transparent,rgba(62,217,190,.25),transparent); -webkit-mask:linear-gradient(#000 0 0) content-box,linear-gradient(#000 0 0); -webkit-mask-composite:xor; mask-composite:exclude; animation:hb-pulse-border 5s linear infinite; pointer-events:none; }
-@keyframes hb-pulse-border { to { transform:translateX(25%); } }
-.hb-pulse-header { display:flex; align-items:center; justify-content:space-between; gap:10px; }
-.hb-pulse-title { margin-top:4px; font:700 15px var(--font-display); }
-.hb-pulse-status-dot { width:6px; height:6px; border-radius:50%; background:currentColor; display:inline-block; }
-.hb-pulse-wave { position:relative; height:120px; margin:12px 0 10px; border-radius:13px; overflow:hidden; background:radial-gradient(circle at 50% 50%,rgba(62,217,190,.055),transparent 48%),rgba(3,12,22,.52); border:1px solid rgba(62,217,190,.08); }
-.hb-pulse-wave svg { display:block; width:100%; height:100%; }
-.hb-pulse-grid { fill:none; stroke:var(--border); stroke-width:1; opacity:.55; stroke-dasharray:2 9; }
-.hb-pulse-line { fill:none; stroke-width:2.8; stroke-linecap:round; stroke-linejoin:round; stroke-dasharray:1500; animation:hb-pulse-draw 4.5s linear infinite; filter:drop-shadow(0 0 5px rgba(62,217,190,.22)); }
-@keyframes hb-pulse-draw { from { stroke-dashoffset:1500; } to { stroke-dashoffset:0; } }
-.hb-pulse-beacon { fill:var(--accent); filter:drop-shadow(0 0 8px rgba(62,217,190,.65)); animation:hb-beacon 1.4s ease-in-out infinite; }
-@keyframes hb-beacon { 50% { r:8; opacity:.45; } }
-.hb-pulse-scan { position:absolute; top:0; bottom:0; width:1px; background:linear-gradient(transparent,var(--accent),transparent); box-shadow:0 0 14px rgba(62,217,190,.55); animation:hb-scan 3.8s linear infinite; opacity:.45; }
-@keyframes hb-scan { from { left:-2%; } to { left:102%; } }
-.hb-pulse-stages { display:grid; grid-template-columns:repeat(3,1fr); gap:10px; }
-.hb-pulse-stage { display:flex; align-items:center; gap:9px; padding:11px 13px; border:1px solid var(--border); border-radius:12px; background:rgba(19,36,59,.56); }
-.hb-pulse-stage-dot { width:8px; height:8px; border-radius:50%; background:var(--text-dim); box-shadow:0 0 0 4px rgba(255,255,255,.025); }
-.hb-pulse-stage.running .hb-pulse-stage-dot { background:var(--warning); box-shadow:0 0 0 4px var(--warning-dim); animation:hb-pulse-dot 1.4s ease-in-out infinite; }
-.hb-pulse-stage.failed .hb-pulse-stage-dot { background:var(--danger); box-shadow:0 0 0 4px var(--danger-dim); }
-.hb-pulse-stage.success .hb-pulse-stage-dot { background:var(--success); box-shadow:0 0 0 4px var(--success-dim); }
-.hb-pulse-stage b { display:block; font:650 15px var(--font-mono); }.hb-pulse-stage span { display:block; margin-top:2px; color:var(--text-dim); font-size:10px; }
-.hb-analytics-zone,.hb-value-zone,.hb-overall-zone,.hb-runs-zone { margin-top:22px; }
-.hb-period-toggle { margin-left:auto; display:inline-flex; gap:2px; padding:3px; border:1px solid var(--border); border-radius:9px; background:rgba(14,28,47,.72); }
-.hb-period-toggle button { border:0; border-radius:6px; padding:5px 10px; color:var(--text-dim); background:transparent; font-size:10.5px; font-weight:700; }
-.hb-period-toggle button:hover { color:var(--text); }.hb-period-toggle button.active { color:var(--text); background:var(--surface-3); box-shadow:0 0 0 1px var(--border); }
-.hb-analytics-grid { display:grid; grid-template-columns:1.25fr 1.25fr .8fr; gap:12px; }
-.hb-analytics-card,.hb-status-card { min-width:0; min-height:340px; padding:17px; border:1px solid var(--border); border-radius:17px; background:linear-gradient(150deg,rgba(14,28,47,.96),rgba(9,20,34,.96)); box-shadow:var(--shadow-sm); transition:transform .22s ease,border-color .22s ease,box-shadow .22s ease; }
-.hb-analytics-card:hover,.hb-status-card:hover { transform:translateY(-3px); border-color:var(--border-hover); box-shadow:0 18px 40px rgba(0,0,0,.25),0 0 26px rgba(62,217,190,.04); }
-.hb-analytics-head { display:flex; align-items:flex-start; justify-content:space-between; gap:12px; }
-.hb-analytics-title { margin-top:4px; font:700 15px var(--font-display); }.hb-analytics-subtitle { margin-top:3px; color:var(--text-dim); font-size:10.5px; }
-.hb-chart-orb { width:9px; height:9px; border-radius:50%; background:var(--accent); box-shadow:0 0 0 5px var(--accent-dim),0 0 14px rgba(62,217,190,.3); animation:hb-glow 2.2s ease-in-out infinite; }
-.hb-analytics-blue .hb-chart-orb { background:var(--accent-2); box-shadow:0 0 0 5px rgba(123,140,255,.1),0 0 14px rgba(123,140,255,.25); }
-.hb-analytics-chart { height:245px; margin-top:14px; }
-.hb-status-rate { color:var(--success); font:700 18px var(--font-mono); text-align:right; }.hb-status-rate span { display:block; color:var(--text-dim); font:500 9px var(--font-body); margin-top:2px; }
-.hb-status-visual { display:flex; align-items:center; justify-content:center; gap:20px; height:245px; }
-.hb-status-ring { width:142px; height:142px; border-radius:50%; display:grid; place-items:center; background:conic-gradient(var(--success) var(--success-pct),var(--danger) var(--success-pct) 96%,var(--warning) 96%); position:relative; box-shadow:0 0 30px rgba(62,217,190,.08); }
-.hb-status-ring::before { content:""; position:absolute; inset:11px; border-radius:50%; background:var(--surface); border:1px solid var(--border); }.hb-status-ring div { position:relative; z-index:1; text-align:center; }.hb-status-ring strong { display:block; font:700 27px var(--font-mono); }.hb-status-ring span { display:block; color:var(--text-dim); font-size:9px; margin-top:2px; }
-.hb-status-legend { display:grid; gap:13px; }.hb-status-legend div { display:grid; grid-template-columns:8px auto; column-gap:8px; align-items:center; }.hb-status-legend .status-dot { width:7px; height:7px; border-radius:50%; grid-row:span 2; }.hb-status-legend .success { background:var(--success); }.hb-status-legend .failed { background:var(--danger); }.hb-status-legend .running { background:var(--warning); }.hb-status-legend b { font:600 13px var(--font-mono); }.hb-status-legend small { color:var(--text-dim); font-size:9.5px; }
-.hb-value-grid { display:grid; grid-template-columns:1.3fr 1.2fr 1fr 1fr; gap:10px; }
-.hb-value-card { position:relative; min-height:142px; overflow:hidden; padding:16px; border:1px solid var(--border); border-radius:15px; background:rgba(14,28,47,.82); transition:transform .2s ease,border-color .2s ease,box-shadow .2s ease; }
-.hb-value-card::after { content:""; position:absolute; width:90px; height:90px; right:-38px; bottom:-42px; border-radius:50%; background:var(--accent); opacity:.04; }.hb-value-card:hover { transform:translateY(-3px); border-color:var(--border-hover); box-shadow:0 16px 34px rgba(0,0,0,.22); }.hb-value-card-icon { width:30px; height:30px; display:grid; place-items:center; border-radius:9px; background:rgba(255,255,255,.035); margin-bottom:12px; }.hb-value-card-value { margin-top:7px; font:650 clamp(20px,2.2vw,28px) var(--font-mono); white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }.hb-value-card-caption { margin-top:5px; color:var(--text-dim); font-size:10.5px; }
-.hb-overall-card { position:relative; display:grid; grid-template-columns:1.6fr repeat(3,1fr); align-items:stretch; overflow:hidden; border:1px solid rgba(123,140,255,.2); border-radius:18px; background:linear-gradient(120deg,rgba(19,30,57,.98),rgba(10,22,38,.96)); box-shadow:0 20px 45px rgba(0,0,0,.2),0 0 35px rgba(123,140,255,.05); }
-.hb-overall-main { position:relative; padding:21px 22px; overflow:hidden; }.hb-overall-orbit { position:absolute; width:180px; height:180px; right:-75px; top:-75px; border:1px solid rgba(123,140,255,.15); border-radius:50%; box-shadow:0 0 40px rgba(123,140,255,.07); animation:hb-orbit 8s linear infinite; }.hb-overall-orbit::after { content:""; position:absolute; width:6px; height:6px; border-radius:50%; background:var(--accent-2); left:24px; top:40px; box-shadow:0 0 12px rgba(123,140,255,.8); }
-@keyframes hb-orbit { to { transform:rotate(360deg); } }
-.hb-overall-number { margin-top:7px; font:750 clamp(31px,4vw,44px) var(--font-mono); color:var(--text); letter-spacing:-2px; }.hb-overall-caption { margin-top:5px; color:var(--text-dim); font-size:10.5px; }.hb-overall-stat { display:flex; flex-direction:column; justify-content:center; padding:18px; border-left:1px solid var(--border); }.hb-overall-stat span { color:var(--text-dim); font-size:10px; text-transform:uppercase; letter-spacing:.7px; }.hb-overall-stat strong { margin-top:7px; font:700 24px var(--font-mono); }.hb-overall-stat.success strong { color:var(--success); }.hb-overall-stat.danger strong { color:var(--danger); }.hb-overall-stat.accent strong { color:var(--accent); }
-.hb-runs-panel { overflow:hidden; border:1px solid var(--border); border-radius:17px; background:rgba(14,28,47,.88); box-shadow:var(--shadow-sm); }.hb-runs-head { display:flex; align-items:center; justify-content:space-between; gap:15px; padding:15px 17px; border-bottom:1px solid var(--border); }.hb-runs-table-head,.hb-run-row { display:grid; grid-template-columns:minmax(0,1.6fr) minmax(130px,1fr) 110px 90px; align-items:center; gap:12px; }.hb-runs-table-head { padding:9px 17px; color:var(--text-dim); font:700 9px var(--font-mono); text-transform:uppercase; letter-spacing:.7px; background:rgba(3,12,22,.3); }.hb-runs-list { max-height:410px; overflow-y:auto; }.hb-run-row { min-height:63px; padding:10px 17px; border-top:1px solid rgba(30,53,81,.72); transition:background .18s ease,transform .18s ease; }.hb-run-row:hover { background:rgba(19,36,59,.55); }.hb-run-row.fresh { animation:hb-run-flash 1.1s ease-out; }.hb-run-bot { display:flex; align-items:center; gap:9px; min-width:0; }.hb-run-bot strong { display:block; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; font-size:12.5px; }.hb-run-bot small { display:block; margin-top:3px; color:var(--text-dim); font:500 9.5px var(--font-mono); overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }.hb-run-client,.hb-run-time { color:var(--text-muted); font-size:11px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }.hb-run-time { color:var(--text-dim); font-family:var(--font-mono); text-align:right; }.hb-empty-runs { padding:42px 20px; text-align:center; color:var(--text-dim); font-size:12px; }
-@keyframes hb-run-flash { 0% { background:rgba(62,217,190,.12); } 100% { background:transparent; } }
-.hb-dashboard-footer { display:flex; justify-content:space-between; align-items:flex-start; gap:20px; margin-top:30px; padding:20px 2px 8px; border-top:1px solid var(--border); color:var(--text-dim); font-size:10.5px; }.hb-dashboard-footer div { display:flex; flex-direction:column; gap:4px; }.hb-dashboard-footer strong { color:var(--text-muted); font:650 11px var(--font-display); }.hb-dashboard-footer a { color:var(--text-muted); text-decoration:none; }.hb-dashboard-footer a:hover { color:var(--accent); }
-@media (max-width: 1120px) { .hb-today-grid{grid-template-columns:repeat(2,1fr)} .hb-analytics-grid{grid-template-columns:1fr 1fr}.hb-status-card{grid-column:1/-1}.hb-value-grid{grid-template-columns:repeat(2,1fr)} .hb-overall-card{grid-template-columns:1.4fr 1fr 1fr 1fr} }
-@media (max-width: 820px) { .hb-dashboard-intro{align-items:flex-start;flex-direction:column}.hb-v3-controls{width:100%;justify-content:flex-start}.hb-analytics-grid{grid-template-columns:1fr}.hb-status-card{grid-column:auto}.hb-overall-card{grid-template-columns:1fr 1fr}.hb-overall-main{grid-column:1/-1}.hb-overall-stat:nth-child(2){border-left:0}.hb-runs-table-head,.hb-run-row{grid-template-columns:minmax(0,1.5fr) 100px 82px}.hb-runs-table-head span:nth-child(2),.hb-run-row .hb-run-client{display:none} }
-@media (max-width: 620px) { .hb-today-grid{grid-template-columns:1fr}.hb-pulse-stages{grid-template-columns:1fr}.hb-value-grid{grid-template-columns:1fr}.hb-overall-card{grid-template-columns:1fr}.hb-overall-main{grid-column:auto}.hb-overall-stat{border-left:0;border-top:1px solid var(--border)}.hb-runs-head{align-items:flex-start;flex-direction:column}.hb-runs-table-head,.hb-run-row{grid-template-columns:minmax(0,1fr) 82px}.hb-runs-table-head span:nth-child(3),.hb-run-row>div:nth-child(3){display:none}.hb-dashboard-footer{flex-direction:column}.hb-section-date,.hb-section-hint{display:none} }
-@media (prefers-reduced-motion: reduce) { .hb-pulse-line,.hb-pulse-beacon,.hb-pulse-scan,.hb-overall-orbit,.hb-dash-metric,.hb-value-card,.hb-analytics-card,.hb-status-card{animation:none!important;transition:none!important} }
-
-/* =========================================================
-   HEARTBEAT - LIVE EXECUTION ECG BORDER
-   ========================================================= */
-
-.hb-dashboard-live {
-  position: relative;
-  isolation: isolate;
-}
-
-/* Subtle permanent dashboard border */
-.hb-dashboard-live::before {
-  content: "";
-  position: absolute;
-  inset: 8px;
-  border: 1px solid rgba(62, 217, 190, 0.14);
-  border-radius: 18px;
-  pointer-events: none;
-  z-index: 0;
-}
-
-/* ECG border */
-.hb-ecg-border {
-  position: absolute;
-  inset: 8px;
-  width: calc(100% - 16px);
-  height: calc(100% - 16px);
-
-  pointer-events: none;
-  z-index: 3;
-  overflow: visible;
-}
-
-/* Faint border track */
-.hb-ecg-track {
-  fill: none;
-  stroke: rgba(62, 217, 190, 0.08);
-  stroke-width: 1;
-}
-
-/* Moving ECG signal */
-.hb-ecg-wave {
-  fill: none;
-  stroke: var(--accent);
-  stroke-width: 2;
-  stroke-linecap: round;
-  stroke-linejoin: round;
-  filter: drop-shadow(0 0 5px rgba(62, 217, 190, 0.55));
-}
-
-@keyframes hb-ecg-run {
-  from { stroke-dashoffset: 0; }
-  to   { stroke-dashoffset: -3170; }
-}
-@media (prefers-reduced-motion: reduce) {
-  .hb-ecg-wave {
-    animation: none;
-    opacity: 0.4;
-  }
-}
-
-@media (max-width: 1100px) {
-  .hb-sidebar { width:82px; flex-basis:82px; }
-  .hb-brand { justify-content:center; padding-left:10px; padding-right:10px; }
-  .hb-brand-copy, .hb-nav-label, .hb-nav-section, .hb-profile-copy, .hb-profile-action, .hb-collapse-copy { display:none !important; }
-  .hb-sidebar-nav { padding-left:10px; padding-right:10px; }
-  .hb-nav-item { justify-content:center; padding:7px; }
-  .hb-nav-icon { width:34px; height:34px; }
-  .hb-sidebar-footer { padding:10px; }
-  .hb-profile { justify-content:center; padding:8px; }
-  .hb-stat-grid { grid-template-columns:repeat(2,minmax(0,1fr)); }
-}
-@media (max-width: 760px) {
-  .hb-app-shell { display:block; }
-  .hb-sidebar { display:none; }
-  .hb-topbar { min-height:62px; padding:10px 14px; }
-  .hb-mobile-toggle { display:grid; place-items:center; width:36px; height:36px; border:1px solid var(--border); background:var(--surface); color:var(--text-muted); border-radius:10px; }
-  .hb-main-content { padding:14px; padding-bottom:82px; }
-  .hb-page-title { font-size:16px; }
-  .hb-page-meta { display:none; }
-  .hb-dashboard-hero { display:block; padding-top:2px; }
-  .hb-dashboard-title { font-size:25px; }
-  .hb-dashboard-subtitle { font-size:12.5px; }
-  .hb-filter-bar { margin-top:14px; width:100%; }
-  .hb-filter-label { display:none; }
-  .hb-stat-grid { grid-template-columns:repeat(2,minmax(0,1fr)); gap:9px; }
-  .hb-stat-card { padding:14px; }
-  .hb-mobile-nav { position:fixed; display:flex; left:10px; right:10px; bottom:10px; z-index:50; gap:4px; padding:6px; border:1px solid var(--border); border-radius:16px; background:rgba(8,20,35,.94); backdrop-filter:blur(18px); box-shadow:0 16px 36px rgba(0,0,0,.38); overflow-x:auto; }
-  .hb-mobile-nav button { flex:1 0 64px; border:0; background:transparent; color:var(--text-dim); border-radius:11px; min-height:50px; display:flex; flex-direction:column; align-items:center; justify-content:center; gap:4px; font-size:9.5px; font-weight:700; }
-  .hb-mobile-nav button.active { color:var(--accent); background:var(--accent-dim); }
-}
-@media (max-width: 520px) {
-  .hb-stat-grid { grid-template-columns:1fr 1fr; }
-  .hb-topbar-left { gap:8px; }
-  .hb-status-chip-label { display:none; }
-}
-@media (prefers-reduced-motion: reduce) { .hb-root * { animation:none !important; transition:none !important; } }
-`;
 /* ------------------------------------------------------------------ */
 /* API helper                                                           */
 /* ------------------------------------------------------------------ */
@@ -436,6 +97,46 @@ function useApi(baseUrl, session, onTokensRefreshed, onUnauthorized) {
   );
 
   return useCallback((path, options = {}) => request(path, options, session.token), [request, session.token]);
+}
+
+
+
+
+
+/* ------------------------------------------------------------------ */
+/* Theme — light/dark, persisted to localStorage. The CSS already      */
+/* defines both palettes on `.hb-root` / `.hb-root[data-theme="dark"]` */
+/* — this hook is the single source of truth for which one is active,  */
+/* shared by the login screen and the authenticated app shell so the   */
+/* choice stays consistent across both.                                */
+/* ------------------------------------------------------------------ */
+const THEME_KEY = "heartbeat_theme";
+
+function useTheme() {
+  const [theme, setTheme] = useState(() => {
+    try {
+      const stored = localStorage.getItem(THEME_KEY);
+      if (stored === "light" || stored === "dark") return stored;
+    } catch (_) { /* localStorage unavailable */ }
+    // No stored preference yet — fall back to the OS/browser preference,
+    // defaulting to light to match the CSS file's base palette.
+    try {
+      if (window.matchMedia && window.matchMedia("(prefers-color-scheme: dark)").matches) {
+        return "dark";
+      }
+    } catch (_) { /* matchMedia unavailable */ }
+    return "light";
+  });
+
+  useEffect(() => {
+    try { localStorage.setItem(THEME_KEY, theme); } catch (_) { /* ignore */ }
+  }, [theme]);
+
+  const toggleTheme = useCallback(() => {
+    setTheme((t) => (t === "dark" ? "light" : "dark"));
+  }, []);
+
+  return { theme, setTheme, toggleTheme };
 }
 
 /* ------------------------------------------------------------------ */
@@ -856,6 +557,14 @@ function pctChange(curr, prev) {
   return Math.round(((curr - prev) / prev) * 100);
 }
 
+function isWithinLastDays(iso, days) {
+  if (!iso) return false;
+  const t = new Date(iso).getTime();
+  if (isNaN(t)) return false;
+  const cutoff = Date.now() - days * 24 * 60 * 60 * 1000;
+  return t >= cutoff;
+}
+
 const CHART_COLORS = {
   accent: "#3ED9BE",
   accent2: "#7C9CFF",
@@ -1068,7 +777,7 @@ function ExecutionPulseBar({ events, connected }) {
   );
 }
 
-function LoginScreen({ onLogin, sessionMessage }) {
+function LoginScreen({ onLogin, sessionMessage, theme, toggleTheme }) {
   const [baseUrl, setBaseUrl] = useState("http://127.0.0.1:8000");
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
@@ -1113,10 +822,27 @@ function LoginScreen({ onLogin, sessionMessage }) {
   };
 
   return (
-    <div className="hb-root" style={{
-      display: "flex", alignItems: "center", justifyContent: "center", padding: 20,
+    <div className="hb-root" data-theme={theme} style={{
+      display: "flex", alignItems: "center", justifyContent: "center", padding: 20, position: "relative",
     }}>
-      <style>{TOKENS}</style>
+      <button
+        onClick={toggleTheme}
+        title={theme === "dark" ? "Switch to light mode" : "Switch to dark mode"}
+        aria-label="Toggle theme"
+        style={{
+          position: "absolute", top: 20, right: 20,
+          display: "inline-flex", alignItems: "center", gap: 7,
+          background: "var(--surface)", border: "1px solid var(--border)",
+          borderRadius: 999, padding: "7px 12px", color: "var(--text-muted)",
+          fontSize: 12, fontWeight: 600, transition: "border-color .15s, color .15s",
+        }}
+        onMouseEnter={(e) => { e.currentTarget.style.borderColor = "var(--border-hover)"; e.currentTarget.style.color = "var(--text)"; }}
+        onMouseLeave={(e) => { e.currentTarget.style.borderColor = "var(--border)"; e.currentTarget.style.color = "var(--text-muted)"; }}
+      >
+        {theme === "dark" ? <Sun size={14} /> : <Moon size={14} />}
+        {theme === "dark" ? "Light" : "Dark"}
+      </button>
+
       <div style={{ width: 380, maxWidth: "100%" }}>
         <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 6, justifyContent: "center" }}>
           <Activity size={22} color="var(--accent)" />
@@ -1367,6 +1093,35 @@ function ActiveFilterChips({ groups }) {
           </span>
         );
       })}
+    </div>
+  );
+}
+
+/* Stylish search input — used on the Clients and Bots list views.
+   Filters client-side across the record's `searchKeys` fields, so it
+   works instantly without a round-trip while the row count updates. */
+function SearchBar({ value, onChange, placeholder = "Search…" }) {
+  return (
+    <div className="hb-search-bar">
+      <Search size={14} />
+      <input
+        type="text"
+        value={value}
+        onChange={(e) => onChange(e.target.value)}
+        placeholder={placeholder}
+        aria-label={placeholder}
+      />
+      {value && (
+        <button
+          type="button"
+          className="hb-search-clear"
+          onClick={() => onChange("")}
+          title="Clear search"
+          aria-label="Clear search"
+        >
+          <X size={12} />
+        </button>
+      )}
     </div>
   );
 }
@@ -1837,7 +1592,15 @@ function DashboardView({ api, wsConnected, liveEvents, role, session }) {
 
   const runTrendForChart = useMemo(() => (runTrendRaw || []).map((d) => ({ date: period === "month" ? d.run_date?.slice(0, 7) : d.run_date?.slice(5), runs: d.total_runs })), [runTrendRaw, period]);
   const hoursTrendForChart = useMemo(() => (hoursTrendRaw || []).map((d) => ({ date: period === "month" ? d.run_date?.slice(0, 7) : d.run_date?.slice(5), hours: d.hours_saved })), [hoursTrendRaw, period]);
-  const filteredRecent = recentStatusFilter === "all" ? recent : recent.filter((r) => r.status === recentStatusFilter);
+  const RECENT_HISTORY_DAYS = 5;
+const recentWithinWindow = useMemo(
+  () => recent.filter((r) => isWithinLastDays(r.start_time, RECENT_HISTORY_DAYS)),
+  [recent]
+);
+const filteredRecent = recentStatusFilter === "all"
+  ? recentWithinWindow
+  : recentWithinWindow.filter((r) => r.status === recentStatusFilter);
+
   const clientName = isAdmin ? "Operations fleet" : (session?.clientName || session?.client_name || session?.email?.split("@")[0] || "Your workspace");
 
   const totalTrendRuns = runTrendForChart.reduce((sum, row) => sum + Number(row.runs || 0), 0);
@@ -1863,6 +1626,8 @@ function DashboardView({ api, wsConnected, liveEvents, role, session }) {
           <ActiveFilterChips groups={filterGroups} />
         </div>
       </section>
+
+       {isAdmin && <ClientActivityStrip api={api} />}
 
       <section className="hb-today-section">
         <div className="hb-section-rule"><div className="hb-eyebrow">Today's run summary</div><span className="hb-section-date">{new Date().toLocaleDateString(undefined, { weekday: "short", month: "short", day: "numeric" })}</span></div>
@@ -1947,7 +1712,11 @@ function DashboardView({ api, wsConnected, liveEvents, role, session }) {
           </div>
           <div className="hb-runs-table-head"><span>Bot</span><span>Client</span><span>Status</span><span>Started</span></div>
           <div className="hb-scroll hb-runs-list">
-            {filteredRecent.length === 0 && <div className="hb-empty-runs">{recent.length === 0 ? "No runs yet." : "No runs match this filter."}</div>}
+            {filteredRecent.length === 0 && (
+  <div className="hb-empty-runs">
+    {recentWithinWindow.length === 0 ? `No runs in the last ${RECENT_HISTORY_DAYS} days.` : "No runs match this filter."}
+  </div>
+)}
             {filteredRecent.map((r, i) => (
               <div key={r.run_id} className={`hb-run-row ${i === 0 && liveEvents.length ? "fresh" : ""}`}>
                 <div className="hb-run-bot"><StatusDot status={r.status} /><div><strong>{r.bot_name}</strong><small>{r.execution_id || `Run #${r.run_id}`}</small></div></div>
@@ -2804,6 +2573,7 @@ function CrudView({ api, canWrite, config }) {
   const [clientFilterId, setClientFilterId] = useState(null);
   const [department, setDepartment] = useState(null);
   const [machine, setMachine] = useState(null);
+  const [search, setSearch] = useState("");
 
   const departmentOptions = useDepartmentOptions(api);
   const machineOptions = useMachineOptions(api);
@@ -2882,12 +2652,30 @@ function CrudView({ api, canWrite, config }) {
     }
   };
 
+  // Client-side search across the record's searchable fields — instant
+  // filtering without another round trip while the count updates live.
+  const filteredRows = useMemo(() => {
+    if (!config.searchKeys || !search.trim()) return rows;
+    const q = search.trim().toLowerCase();
+    return rows.filter((row) =>
+      config.searchKeys.some((k) => String(row[k] ?? "").toLowerCase().includes(q))
+    );
+  }, [rows, search, config.searchKeys]);
+
   return (
     <div>
       <ErrorBanner message={error} onDismiss={() => setError("")} />
 
       <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", marginBottom: 16, flexWrap: "wrap", gap: 10 }}>
-        <div style={{ color: "var(--text-muted)", fontSize: 13, paddingTop: 8 }}>{rows.length} {config.label.toLowerCase()}</div>
+        <div style={{ display: "flex", alignItems: "center", gap: 12, flexWrap: "wrap" }}>
+          <div style={{ color: "var(--text-muted)", fontSize: 13, paddingTop: 8, whiteSpace: "nowrap" }}>
+            {filteredRows.length} {config.label.toLowerCase()}
+            {search.trim() && rows.length !== filteredRows.length ? ` of ${rows.length}` : ""}
+          </div>
+          {config.searchKeys && (
+            <SearchBar value={search} onChange={setSearch} placeholder={config.searchPlaceholder || `Search ${config.label.toLowerCase()}…`} />
+          )}
+        </div>
         <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
           {filterGroups.length > 0 && (
             <div>
@@ -2918,10 +2706,12 @@ function CrudView({ api, canWrite, config }) {
               {loading && (
                 <tr><td colSpan={config.columns.length + 1} style={{ padding: 24, textAlign: "center", color: "var(--text-dim)" }}>Loading…</td></tr>
               )}
-              {!loading && rows.length === 0 && (
-                <tr><td colSpan={config.columns.length + 1} style={{ padding: 24, textAlign: "center", color: "var(--text-dim)" }}>Nothing here yet.</td></tr>
+              {!loading && filteredRows.length === 0 && (
+                <tr><td colSpan={config.columns.length + 1} style={{ padding: 24, textAlign: "center", color: "var(--text-dim)" }}>
+                  {rows.length === 0 ? "Nothing here yet." : "No matches for your search."}
+                </td></tr>
               )}
-              {rows.map((row) => (
+              {filteredRows.map((row) => (
                 <tr key={row[config.idField]} className="hb-row-hover" style={{ borderBottom: "1px solid var(--border)" }}>
                   {config.columns.map((c) => (
                     <td key={c.key} style={{ padding: "11px 16px", verticalAlign: "middle" }}>
@@ -3109,6 +2899,8 @@ const clientConfig = {
   label: "Clients", singular: "Client", idField: "client_id", listPath: "/clients/",
   supportsSoftDelete: true,
   showCreateLogin: true,
+  searchKeys: ["client_name", "contact_person", "email", "email_domains"],
+  searchPlaceholder: "Search clients…",
   columns: [
     { key: "client_name", label: "Name" },
     { key: "contact_person", label: "Contact" },
@@ -3147,6 +2939,8 @@ const botConfig = {
   showClientFilter: true,
   showDepartmentFilter: true,
   showMachineFilter: true,
+  searchKeys: ["bot_name", "bot_code", "machine_name", "owner"],
+  searchPlaceholder: "Search bots…",
   refs: [{ key: "clients", path: "/clients/" }, { key: "departments", path: "/departments/" }],
   columns: [
     { key: "bot_name", label: "Name" },
@@ -3154,7 +2948,7 @@ const botConfig = {
     { key: "client_id", label: "Client", render: (r, refs) => refs.clients?.find((c) => c.client_id === r.client_id)?.client_name || `#${r.client_id}` },
     { key: "department", label: "Department", render: (r) => r.department ? <Badge tone="accent">{r.department}</Badge> : <span style={{ color: "var(--text-dim)" }}>—</span> },
     { key: "machine_name", label: "Machine", render: (r) => r.machine_name ? <span style={{ fontFamily: "var(--font-mono)", fontSize: 12.5, color: "var(--text-muted)" }}>{r.machine_name}</span> : <span style={{ color: "var(--text-dim)" }}>—</span> },
-    { key: "rate", label: "Rate", render: (r) => <span style={{ fontFamily: "var(--font-mono)", fontSize: 12.5, color: "var(--text-muted)" }}>{r.transaction_batch_size} acc = {r.transaction_batch_hours}h</span> },
+    { key: "Manual  Process Rate", label: "Manual Process Rate", render: (r) => <span style={{ fontFamily: "var(--font-mono)", fontSize: 12.5, color: "var(--text-muted)" }}>{r.transaction_batch_size} acc = {r.transaction_batch_hours}h</span> },
     { key: "status", label: "Status", render: (r) => <Badge tone={r.status === "Active" ? "success" : "muted"}>{r.status}</Badge> },
   ],
   formFields: [
@@ -3200,7 +2994,66 @@ const NAV_CLIENT = [
   { key: "account", label: "Account", icon: UserCircle2 },
 ];
 
-function AppShell({ session, onLogout, onSessionExpired, onTokensRefreshed }) {
+/* Sidebar profile block — click the avatar row to open a small dropdown
+   with the theme toggle and Sign out. Keeps the footer compact instead
+   of stacking a permanently-visible switch under every user's name. */
+function ProfileMenu({ email, role, onLogout, theme, toggleTheme }) {
+  const [open, setOpen] = useState(false);
+  const rootRef = useRef(null);
+
+  useEffect(() => {
+    if (!open) return;
+    const onDocClick = (e) => {
+      if (rootRef.current && !rootRef.current.contains(e.target)) setOpen(false);
+    };
+    const onEsc = (e) => { if (e.key === "Escape") setOpen(false); };
+    document.addEventListener("mousedown", onDocClick);
+    document.addEventListener("keydown", onEsc);
+    return () => {
+      document.removeEventListener("mousedown", onDocClick);
+      document.removeEventListener("keydown", onEsc);
+    };
+  }, [open]);
+
+  return (
+    <div className="hb-profile" ref={rootRef}>
+      {open && (
+        <div className="hb-profile-menu">
+          <button className="hb-theme-toggle" onClick={toggleTheme} type="button">
+            {theme === "dark" ? <Moon size={15} /> : <Sun size={15} />}
+            {theme === "dark" ? "Dark mode" : "Light mode"}
+            <span className={`hb-theme-track${theme === "dark" ? " on" : ""}`}>
+              <span className="hb-theme-thumb" />
+            </span>
+          </button>
+          <div className="hb-profile-menu-divider" />
+          <button className="hb-profile-menu-item danger" onClick={onLogout} type="button">
+            <LogOut size={14} /> Sign out
+          </button>
+        </div>
+      )}
+      <button
+        className={`hb-profile-trigger${open ? " is-open" : ""}`}
+        onClick={() => setOpen((o) => !o)}
+        type="button"
+        aria-haspopup="menu"
+        aria-expanded={open}
+      >
+        <div className="hb-avatar">{initialsOf(email)}</div>
+        <div className="hb-profile-copy" style={{ minWidth: 0, flex: 1, textAlign: "left" }}>
+          <div style={{ fontSize: 12.5, fontWeight: 600, color: "var(--text)", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{email}</div>
+          <div style={{ marginTop: 4 }}><Badge tone="accent">{role}</Badge></div>
+        </div>
+        <ChevronDown
+          size={14}
+          style={{ transform: open ? "rotate(180deg)" : "none", transition: "transform .15s", color: "var(--text-dim)", flexShrink: 0 }}
+        />
+      </button>
+    </div>
+  );
+}
+
+function AppShell({ session, onLogout, onSessionExpired, onTokensRefreshed, theme, toggleTheme }) {
   const { baseUrl, token, role, email } = session;
   const api = useApi(baseUrl, session, onTokensRefreshed, onSessionExpired);
   const [view, setView] = useState("dashboard");
@@ -3274,14 +3127,14 @@ function AppShell({ session, onLogout, onSessionExpired, onTokensRefreshed }) {
   };
 
   return (
-    <div className="hb-root hb-app-shell">
-      <style>{TOKENS}</style>
+    <div className="hb-root hb-app-shell" data-theme={theme}>
+      {/* <style>{TOKENS}</style> */}
 
       <aside className="hb-sidebar">
         <div className="hb-brand">
           <div className="hb-brand-mark">
   <img
-    src="./public/HEARTBEAT.png"
+    src="./public/logo2.png"
     alt="HeartBeat"
     className="hb-brand-logo"
   />
@@ -3308,16 +3161,7 @@ function AppShell({ session, onLogout, onSessionExpired, onTokensRefreshed }) {
         </nav>
 
         <div className="hb-sidebar-footer">
-          <div className="hb-profile">
-            <div className="hb-avatar">{initialsOf(email)}</div>
-            <div className="hb-profile-copy" style={{ minWidth: 0, flex: 1 }}>
-              <div style={{ fontSize: 12.5, fontWeight: 600, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{email}</div>
-              <div style={{ marginTop: 4 }}><Badge tone="accent">{role}</Badge></div>
-            </div>
-            <button className="hb-profile-action" onClick={onLogout} title="Sign out" aria-label="Sign out" style={{ border: 0, background: "transparent", color: "var(--text-dim)", padding: 5, display: "grid", placeItems: "center", borderRadius: 7 }}>
-              <LogOut size={15} />
-            </button>
-          </div>
+          <ProfileMenu email={email} role={role} onLogout={onLogout} theme={theme} toggleTheme={toggleTheme} />
         </div>
       </aside>
 
@@ -3334,11 +3178,27 @@ function AppShell({ session, onLogout, onSessionExpired, onTokensRefreshed }) {
             </div>
           </div>
 
-          <div className="hb-status-chip" title={wsConnected ? "Realtime connection is active" : "Realtime connection is reconnecting"}>
-            <span className="hb-status-chip-label">Realtime</span>
-            {wsConnected
-              ? <Badge tone="success"><Wifi size={11} /> connected</Badge>
-              : <Badge tone="muted"><WifiOff size={11} /> reconnecting</Badge>}
+          <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
+            <button
+              onClick={toggleTheme}
+              title={theme === "dark" ? "Switch to light mode" : "Switch to dark mode"}
+              aria-label="Toggle theme"
+              style={{
+                display: "grid", placeItems: "center", width: 36, height: 36,
+                border: "1px solid var(--border)", background: "var(--surface)",
+                color: "var(--text-muted)", borderRadius: 10, transition: "border-color .15s, color .15s",
+              }}
+              onMouseEnter={(e) => { e.currentTarget.style.borderColor = "var(--border-hover)"; e.currentTarget.style.color = "var(--text)"; }}
+              onMouseLeave={(e) => { e.currentTarget.style.borderColor = "var(--border)"; e.currentTarget.style.color = "var(--text-muted)"; }}
+            >
+              {theme === "dark" ? <Sun size={16} /> : <Moon size={16} />}
+            </button>
+            <div className="hb-status-chip" title={wsConnected ? "Realtime connection is active" : "Realtime connection is reconnecting"}>
+              <span className="hb-status-chip-label">Realtime</span>
+              {wsConnected
+                ? <Badge tone="success"><Wifi size={11} /> connected</Badge>
+                : <Badge tone="muted"><WifiOff size={11} /> reconnecting</Badge>}
+            </div>
           </div>
         </header>
 
@@ -3438,6 +3298,7 @@ const loadStoredSession = () => {
 export default function HeartBeatApp() {
   const [session, setSession] = useState(loadStoredSession);
   const [sessionMessage, setSessionMessage] = useState("");
+  const { theme, toggleTheme } = useTheme();
 
   const handleLogin = (s) => {
     localStorage.setItem(SESSION_KEY, JSON.stringify(s));
@@ -3462,13 +3323,24 @@ export default function HeartBeatApp() {
     });
   };
 
-  if (!session) return <LoginScreen onLogin={handleLogin} sessionMessage={sessionMessage} />;
+  if (!session) {
+    return (
+      <LoginScreen
+        onLogin={handleLogin}
+        sessionMessage={sessionMessage}
+        theme={theme}
+        toggleTheme={toggleTheme}
+      />
+    );
+  }
   return (
     <AppShell
       session={session}
       onLogout={() => handleLogout("")}
       onSessionExpired={() => handleLogout("Your session expired — please sign in again.")}
       onTokensRefreshed={handleTokensRefreshed}
+      theme={theme}
+      toggleTheme={toggleTheme}
     />
   );
 }
