@@ -1,17 +1,23 @@
+/* APPROVED UI BUILD: 2026-08-17 v5 — timezone + messaging UI refinements */
 import React, { useState, useEffect, useRef, useCallback, useMemo } from "react";
 import {
-  LayoutDashboard, Users, Bot, LogOut, Plus, Pencil,
-  Trash2, Activity, CheckCircle2, XCircle, Clock, Wifi, WifiOff,
-  X, AlertTriangle, Loader2, KeyRound, Check, FileBarChart, UserCircle2,
+  LayoutDashboard, Users, Bot, LogOut, Plus, Pencil, Trash2, Activity,
+  ExternalLink, CheckCircle2, XCircle, Clock, Wifi, WifiOff, X,
+  AlertTriangle, Loader2, KeyRound, Check, FileBarChart, UserCircle2,
   TrendingUp, Building2, AlertOctagon, Unlock, RotateCcw, ShieldAlert,
-  Filter, ChevronDown, HardDrive, CalendarClock, Sun, Moon, Search
+  Filter, ChevronDown, HardDrive, CalendarClock, Sun, Moon, Search,
+  ChevronsLeft, ChevronsRight, FileText, MessageSquare, Send,
+  Copy, Link2, ClipboardList, Eye, EyeOff, Lamp, Volume2, VolumeX, Reply, Mail
 } from "lucide-react";
 import {
-  ResponsiveContainer, AreaChart, Area, BarChart, Bar, XAxis, YAxis, CartesianGrid,
-  Tooltip, PieChart, Pie, Cell, Legend,
+  ResponsiveContainer, AreaChart, Area, BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, Cell
 } from "recharts";
 
 import "./styles/heartbeat.css";
+import ClientManagementCRUDView from "./components/ClientManagementCRUD";
+import ActionItems from "./components/ActionItems";
+import Notifications from "./components/Notifications";
+import { handleWebSocketSoundEvent, isSoundEnabled, toggleSound } from "./service/soundService";
 
 /* ------------------------------------------------------------------ */
 /* Design tokens — "vitals monitor" system                             */
@@ -61,12 +67,17 @@ function useApi(baseUrl, session, onTokensRefreshed, onUnauthorized) {
 
   const request = useCallback(
     async (path, options = {}, token, isRetry = false) => {
-      const headers = { "Content-Type": "application/json", ...(options.headers || {}) };
+      const { responseType, ...fetchOptions } = options;
+      const headers = { "Content-Type": "application/json", ...(fetchOptions.headers || {}) };
       if (token) headers["Authorization"] = `Bearer ${token}`;
 
-      const res = await fetch(`${baseUrl}${path}`, { ...options, headers });
+      const res = await fetch(`${baseUrl}${path}`, { ...fetchOptions, headers });
       let body = null;
-      try { body = await res.json(); } catch (_) { /* no body */ }
+      if (responseType === "text") {
+        try { body = await res.text(); } catch (_) { /* no body */ }
+      } else {
+        try { body = await res.json(); } catch (_) { /* no body */ }
+      }
 
       if (res.status === 401 && !isRetry && session.refreshToken) {
         try {
@@ -96,7 +107,9 @@ function useApi(baseUrl, session, onTokensRefreshed, onUnauthorized) {
     [baseUrl, session.refreshToken, doRefresh, onUnauthorized]
   );
 
-  return useCallback((path, options = {}) => request(path, options, session.token), [request, session.token]);
+  const boundApi = useCallback((path, options = {}) => request(path, options, session.token), [request, session.token]);
+  boundApi.baseUrl = baseUrl;
+  return boundApi;
 }
 
 
@@ -139,6 +152,38 @@ function useTheme() {
   return { theme, setTheme, toggleTheme };
 }
 
+/* Lamp-pull theme toggle for the login screen — click swings the lamp,
+   lights the bulb, and casts a soft glow cone while the theme flips. */
+function LampThemeToggle({ theme, toggleTheme }) {
+  const isLight = theme === "light";
+  const [swinging, setSwinging] = useState(false);
+
+  const handleClick = () => {
+    setSwinging(true);
+    toggleTheme();
+    window.setTimeout(() => setSwinging(false), 650);
+  };
+
+  return (
+    <button
+      type="button"
+      onClick={handleClick}
+      title={isLight ? "Turn the lamp off" : "Turn the lamp on"}
+      aria-label="Toggle theme"
+      className={`hb-lamp-toggle${isLight ? " is-on" : ""}${swinging ? " is-swinging" : ""}`}
+    >
+      <span className="hb-lamp-rig">
+        <span className="hb-lamp-cord" />
+        <span className="hb-lamp-fixture">
+          <Lamp size={24} strokeWidth={1.7} />
+          <span className="hb-lamp-bulb-glow" />
+        </span>
+      </span>
+      <span className="hb-lamp-light-cone" />
+      <span className="hb-lamp-caption">{isLight ? "Lights on" : "Lights off"}</span>
+    </button>
+  );
+}
 /* ------------------------------------------------------------------ */
 /* Count-up number — used anywhere a metric lands on screen             */
 /* ------------------------------------------------------------------ */
@@ -162,32 +207,11 @@ function useCountUp(target, duration = 700) {
 
 /* Same easing as useCountUp but keeps decimal precision — used for hours
    saved, which are meaningful as fractional values (e.g. 18.75 hrs). */
-function useCountUpFloat(target, decimals = 2, duration = 700) {
-  const [display, setDisplay] = useState(0);
-  useEffect(() => {
-    if (typeof target !== "number" || isNaN(target)) return;
-    let raf; let start;
-    const step = (ts) => {
-      if (!start) start = ts;
-      const p = Math.min((ts - start) / duration, 1);
-      const eased = 1 - Math.pow(1 - p, 3);
-      setDisplay(target * eased);
-      if (p < 1) raf = requestAnimationFrame(step);
-    };
-    raf = requestAnimationFrame(step);
-    return () => raf && cancelAnimationFrame(raf);
-  }, [target, duration]);
-  return typeof target === "number" ? display.toFixed(decimals) : target;
-}
-
-/* ------------------------------------------------------------------ */
-/* Small building blocks                                                */
-/* ------------------------------------------------------------------ */
 function StatusDot({ status }) {
   const color =
     status === "Success" ? "var(--success)" :
-    status === "Failed" ? "var(--danger)" :
-    status === "Started" ? "var(--warning)" : "var(--text-dim)";
+      status === "Failed" ? "var(--danger)" :
+        status === "Started" ? "var(--warning)" : "var(--text-dim)";
   return (
     <span style={{
       display: "inline-block", width: 8, height: 8, borderRadius: "50%",
@@ -222,119 +246,6 @@ function Badge({ children, tone = "muted" }) {
 /* Groups related StatCards under one bordered section, so "run outcome"
    numbers and "fleet snapshot" numbers read as two distinct groups
    instead of one flat row of cards. */
-function StatSection({ title, children }) {
-  return (
-    <div style={{
-      background: "var(--surface)", border: "1px solid var(--border)", borderRadius: 14,
-      padding: "16px 18px 18px", flex: "1 1 320px", minWidth: 300,
-    }}>
-      <div className="hb-eyebrow" style={{ marginBottom: 12 }}>{title}</div>
-      <div style={{ display: "flex", gap: 10, flexWrap: "wrap" }}>{children}</div>
-    </div>
-  );
-}
-
-function MiniStat({ label, value, tone = "accent", index = 0 }) {
-  const colorMap = {
-    accent: "var(--accent)", success: "var(--success)",
-    danger: "var(--danger)", warning: "var(--warning)",
-  };
-  const animated = useCountUp(typeof value === "number" ? value : NaN);
-  const shown = typeof value === "number" ? animated : value;
-  return (
-    <div style={{
-      flex: "1 1 110px", minWidth: 90, background: "var(--surface-2)", border: "1px solid var(--border)",
-      borderRadius: 10, padding: "11px 14px", animation: `hb-rise .4s ease ${index * 0.05}s both`,
-    }}>
-      <div style={{ fontSize: 11, color: "var(--text-muted)", marginBottom: 4, fontWeight: 500 }}>{label}</div>
-      <div style={{ fontFamily: "var(--font-mono)", fontSize: 21, fontWeight: 600, color: colorMap[tone] || "var(--text)" }}>
-        {shown}
-      </div>
-    </div>
-  );
-}
-
-/* Big, headline-weight cards for "Run summary" — the numbers that matter
-   most get the largest treatment, an icon chip, a soft radial glow, and
-   a pulsing icon when there's something actually running right now. */
-function BigStatCard({ icon: Icon, label, value, tone = "accent", index = 0, pulse = false, subtitle = null }) {
-  const colorMap = { accent: "var(--accent)", success: "var(--success)", danger: "var(--danger)", warning: "var(--warning)" };
-  const dimMap = { accent: "var(--accent-dim)", success: "var(--success-dim)", danger: "var(--danger-dim)", warning: "var(--warning-dim)" };
-  const color = colorMap[tone] || "var(--accent)";
-  const dim = dimMap[tone] || "var(--accent-dim)";
-  const animated = useCountUp(typeof value === "number" ? value : NaN);
-  const shown = typeof value === "number" ? animated : value;
-  return (
-    <div
-      style={{
-        flex: "1 1 210px", minWidth: 190, background: "var(--surface)", border: "1px solid var(--border)",
-        borderRadius: 18, padding: "22px 24px", position: "relative", overflow: "hidden",
-        animation: `hb-rise .5s ease ${index * 0.06}s both`,
-        transition: "transform .2s ease, border-color .2s ease, box-shadow .2s ease",
-      }}
-      onMouseEnter={(e) => { e.currentTarget.style.transform = "translateY(-3px)"; e.currentTarget.style.borderColor = "var(--border-hover)"; e.currentTarget.style.boxShadow = "0 12px 28px rgba(0,0,0,0.25)"; }}
-      onMouseLeave={(e) => { e.currentTarget.style.transform = "translateY(0)"; e.currentTarget.style.borderColor = "var(--border)"; e.currentTarget.style.boxShadow = "none"; }}
-    >
-      <div style={{ position: "absolute", top: -36, right: -36, width: 120, height: 120, borderRadius: "50%", background: color, opacity: 0.07 }} />
-      <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 16, position: "relative" }}>
-        <div style={{
-          width: 36, height: 36, borderRadius: 10, display: "flex", alignItems: "center", justifyContent: "center",
-          background: dim, color, flexShrink: 0,
-          animation: pulse ? "hb-pulse-dot 1.4s ease-in-out infinite" : "none",
-        }}>
-          <Icon size={18} />
-        </div>
-        <div className="hb-eyebrow">{label}</div>
-      </div>
-      <div style={{ fontFamily: "var(--font-mono)", fontSize: 36, fontWeight: 700, color, lineHeight: 1, position: "relative" }}>
-        {shown}
-      </div>
-      {subtitle && (
-        <div style={{ fontSize: 11.5, color: "var(--text-dim)", marginTop: 8, position: "relative" }}>
-          {subtitle}
-        </div>
-      )}
-    </div>
-  );
-}
-
-/* Compact single item inside the fleet-snapshot ticker strip */
-function FleetSnapshotItem({ icon: Icon, label, value, index = 0 }) {
-  const animated = useCountUp(typeof value === "number" ? value : NaN, 500);
-  const shown = typeof value === "number" ? animated : value;
-  return (
-    <div style={{
-      flex: "1 1 140px", minWidth: 130, display: "flex", alignItems: "center", gap: 10,
-      padding: "13px 18px", animation: `hb-rise .4s ease ${index * 0.05}s both`,
-    }}>
-      <Icon size={15} color="var(--text-dim)" style={{ flexShrink: 0 }} />
-      <div style={{ minWidth: 0 }}>
-        <div style={{ fontFamily: "var(--font-mono)", fontSize: 16.5, fontWeight: 600, color: "var(--text)" }}>{shown}</div>
-        <div style={{ fontSize: 10.5, color: "var(--text-dim)", textTransform: "uppercase", letterSpacing: 0.6, whiteSpace: "nowrap" }}>{label}</div>
-      </div>
-    </div>
-  );
-}
-
-/* Secondary, quieter row underneath the run summary — same info density
-   as before, but visually de-emphasized as a single ticker strip rather
-   than boxed cards, so it reads as supporting context, not headline. */
-function FleetSnapshotStrip({ items }) {
-  return (
-    <div style={{
-      display: "flex", flexWrap: "wrap", background: "var(--surface-2)", border: "1px solid var(--border)",
-      borderRadius: 12, overflow: "hidden", marginBottom: 22,
-    }}>
-      {items.map((it, i) => (
-        <React.Fragment key={it.label}>
-          {i > 0 && <div style={{ width: 1, background: "var(--border)", flexShrink: 0 }} />}
-          <FleetSnapshotItem {...it} index={i} />
-        </React.Fragment>
-      ))}
-    </div>
-  );
-}
-
 function StatCard({ label, value, tone = "accent", index = 0 }) {
   const colorMap = {
     accent: "var(--accent)", success: "var(--success)",
@@ -429,11 +340,12 @@ function PasswordField({ value, onChange, placeholder, required, minLength, auto
         aria-label={visible ? "Hide password" : "Show password"}
         style={{
           position: "absolute", right: 6, top: "50%", transform: "translateY(-50%)",
-          background: "none", border: "none", fontSize: 16, lineHeight: 1,
+          background: "none", border: "none", lineHeight: 1,
           padding: 6, borderRadius: 6, color: "var(--text-muted)",
+          display: "grid", placeItems: "center",
         }}
       >
-        {visible ? "🙉" : "🙈"}
+        {visible ? <EyeOff size={16} /> : <Eye size={16} />}
       </button>
     </div>
   );
@@ -467,7 +379,162 @@ function Modal({ title, onClose, children, width = 440 }) {
     </div>
   );
 }
+function ResetPasswordModal({ api, user, onClose, onDone }) {
+  const [newPassword, setNewPassword] = useState("");
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState("");
 
+  const submit = async (e) => {
+    e.preventDefault();
+    setLoading(true);
+    setError("");
+    try {
+      await api(`/auth/users/${user.user_id}/reset-password`, {
+        method: "POST",
+        body: JSON.stringify({ new_password: newPassword }),
+      });
+      onDone();
+    } catch (err) {
+      setError(err.message || "Failed to reset password.");
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  return (
+    <Modal title={`Reset Password — ${user.email}`} onClose={onClose} width={400}>
+      <form onSubmit={submit}>
+        <ErrorBanner message={error} onDismiss={() => setError("")} />
+        <Field label="New Password">
+          <PasswordField
+            value={newPassword}
+            onChange={(e) => setNewPassword(e.target.value)}
+            required
+            minLength={6}
+            autoComplete="new-password"
+            placeholder="Enter new password"
+          />
+        </Field>
+        <div style={{ display: "flex", gap: 10, justifyContent: "flex-end", marginTop: 14 }}>
+          <Button variant="ghost" onClick={onClose} type="button">Cancel</Button>
+          <Button type="submit" disabled={loading}>
+            {loading ? "Resetting…" : "Reset Password"}
+          </Button>
+        </div>
+      </form>
+    </Modal>
+  );
+}
+
+function CreateUserModal({ api, onClose, onCreated }) {
+  const [email, setEmail] = useState("");
+  const [password, setPassword] = useState("");
+  const [role, setRole] = useState("admin");
+  const [clientId, setClientId] = useState("");
+  const [clients, setClients] = useState([]);
+  const [error, setError] = useState("");
+  const [loading, setLoading] = useState(false);
+
+  useEffect(() => {
+    (async () => {
+      try {
+        const res = await api("/clients/");
+        setClients(res?.data || res || []);
+      } catch (_) { /* non-critical */ }
+    })();
+  }, [api]);
+
+  const submit = async (e) => {
+    e.preventDefault();
+    setError("");
+    setLoading(true);
+    try {
+      await api("/auth/register", {
+        method: "POST",
+        body: JSON.stringify({
+          email,
+          password,
+          role,
+          client_id: role === "client" ? Number(clientId) : undefined,
+        }),
+      });
+      onCreated();
+      onClose();
+    } catch (err) {
+      setError(err.message || "Failed to create user.");
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  return (
+    <Modal title="Create New User" onClose={onClose} width={420}>
+      <form onSubmit={submit}>
+        <ErrorBanner message={error} onDismiss={() => setError("")} />
+        <Field label="Email Address">
+          <input
+            style={inputStyle}
+            type="email"
+            required
+            value={email}
+            onChange={(e) => setEmail(e.target.value)}
+            placeholder="user@stayahead.com"
+          />
+        </Field>
+
+        <Field label="Password">
+          <PasswordField
+            value={password}
+            onChange={(e) => setPassword(e.target.value)}
+            required
+            minLength={6}
+            autoComplete="new-password"
+            placeholder="Min 6 characters"
+          />
+        </Field>
+
+        <Field label="Role">
+          <select
+            style={inputStyle}
+            value={role}
+            onChange={(e) => setRole(e.target.value)}
+          >
+            <option value="admin">Admin (Full Access)</option>
+            <option value="admin2">Admin 2 (View Only)</option>
+            <option value="admin3">Admin 3 (View Only)</option>
+            <option value="client">Client</option>
+          </select>
+        </Field>
+
+        {role === "client" && (
+          <Field label="Assign Client">
+            <select
+              style={inputStyle}
+              required
+              value={clientId}
+              onChange={(e) => setClientId(e.target.value)}
+            >
+              <option value="">Select a Client…</option>
+              {clients.map((c) => (
+                <option key={c.client_id} value={c.client_id}>
+                  {c.client_name}
+                </option>
+              ))}
+            </select>
+          </Field>
+        )}
+
+        <div style={{ display: "flex", gap: 10, justifyContent: "flex-end", marginTop: 16 }}>
+          <Button variant="ghost" onClick={onClose} type="button">Cancel</Button>
+          <Button type="submit" disabled={loading}>
+            {loading ? <Loader2 size={14} className="hb-spin" /> : <Plus size={14} />}
+            {loading ? "Creating…" : "Create User"}
+          </Button>
+        </div>
+      </form>
+    </Modal>
+  );
+}
 function ErrorBanner({ message, onDismiss }) {
   if (!message) return null;
   return (
@@ -484,6 +551,7 @@ function ErrorBanner({ message, onDismiss }) {
     </div>
   );
 }
+
 
 function InfoBanner({ message, onDismiss }) {
   if (!message) return null;
@@ -529,13 +597,19 @@ function toDateStr(d) {
   if (typeof d === "string") return d.slice(0, 10);
   return null;
 }
+function localDateStr(d) {
+  const y = d.getFullYear();
+  const m = String(d.getMonth() + 1).padStart(2, "0");
+  const day = String(d.getDate()).padStart(2, "0");
+  return `${y}-${m}-${day}`;
+}
 function getTodayStr() {
-  return new Date().toISOString().slice(0, 10);
+  return localDateStr(new Date());
 }
 function getYesterdayStr() {
   const d = new Date();
   d.setDate(d.getDate() - 1);
-  return d.toISOString().slice(0, 10);
+  return localDateStr(d);
 }
 /* Finds the row in a daily trend array (e.g. run-trend, hours-saved-trend)
    whose date field matches the given date string. */
@@ -555,6 +629,67 @@ function pickField(obj, keys, fallback = 0) {
 function pctChange(curr, prev) {
   if (curr == null || prev == null || prev === 0) return null;
   return Math.round(((curr - prev) / prev) * 100);
+}
+
+function parseServerDate(iso) {
+  if (!iso) return null;
+  if (iso instanceof Date) return iso;
+  const value = String(iso).trim();
+  if (!value) return null;
+  const normalized = /(?:Z|[+-]\d{2}:?\d{2})$/i.test(value) ? value : `${value}Z`;
+  const date = new Date(normalized);
+  return Number.isNaN(date.getTime()) ? null : date;
+}
+
+function getLocalDateStr(iso) {
+  if (!iso) return "";
+  // If passed a Date object, return its local date parts directly
+  if (iso instanceof Date) {
+    if (isNaN(iso.getTime())) return "";
+    const y = iso.getFullYear();
+    const m = String(iso.getMonth() + 1).padStart(2, "0");
+    const day = String(iso.getDate()).padStart(2, "0");
+    return `${y}-${m}-${day}`;
+  }
+  const value = String(iso).trim();
+  if (!value) return "";
+  // If the server sends a naive datetime string (no TZ suffix), the DB time IS
+  // already in local/IST time. We must NOT treat it as UTC.
+  // Just extract the date portion directly from the string to avoid a +5:30 shift
+  // that would push evening IST runs into the next day.
+  if (/^\d{4}-\d{2}-\d{2}(T\d{2}:\d{2}(:\d{2})?)?$/.test(value)) {
+    return value.slice(0, 10);
+  }
+  // Has explicit TZ offset (e.g. +05:30 or Z) — parse and use local date
+  const d = new Date(value);
+  if (isNaN(d.getTime())) return "";
+  const y = d.getFullYear();
+  const m = String(d.getMonth() + 1).padStart(2, "0");
+  const day = String(d.getDate()).padStart(2, "0");
+  return `${y}-${m}-${day}`;
+}
+
+function formatRunTime(iso) {
+  if (!iso) return "—";
+  const date = parseServerDate(iso) || new Date(iso);
+  if (isNaN(date.getTime())) return "—";
+  return new Intl.DateTimeFormat("en-US", {
+    hour: "2-digit",
+    minute: "2-digit",
+    hour12: true,
+  }).format(date);
+}
+
+function fmtDuration(seconds) {
+  if (seconds == null || isNaN(seconds)) return "—";
+  const sec = Math.round(Number(seconds));
+  const mins = Math.floor(sec / 60);
+  const secs = sec % 60;
+  if (mins === 0) return `${secs}s`;
+  if (mins < 60) return `${mins}m ${secs}s`;
+  const hrs = Math.floor(mins / 60);
+  const remMins = mins % 60;
+  return `${hrs}h ${remMins}m`;
 }
 
 function isWithinLastDays(iso, days) {
@@ -593,29 +728,6 @@ function ChartTooltip({ active, payload, label }) {
   );
 }
 
-function ChartCard({ title, children, height = 220, totalLabel, totalValue, totalTone = "accent" }) {
-  const colorMap = {
-    accent: "var(--accent)", success: "var(--success)",
-    danger: "var(--danger)", warning: "var(--warning)", accent2: "var(--accent-2)",
-  };
-  return (
-    <div style={{ background: "var(--surface)", border: "1px solid var(--border)", borderRadius: 14, padding: "16px 18px" }}>
-      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", marginBottom: 14 }}>
-        <div style={{ fontFamily: "var(--font-display)", fontWeight: 600, fontSize: 14 }}>{title}</div>
-        {totalValue != null && (
-          <div style={{ textAlign: "right" }}>
-            <div style={{ fontFamily: "var(--font-mono)", fontSize: 17, fontWeight: 700, color: colorMap[totalTone] || "var(--text)", lineHeight: 1 }}>
-              {totalValue}
-            </div>
-            <div style={{ fontSize: 10.5, color: "var(--text-dim)", marginTop: 2 }}>{totalLabel}</div>
-          </div>
-        )}
-      </div>
-      <div style={{ height }}>{children}</div>
-    </div>
-  );
-}
-
 function EmptyChartState() {
   return (
     <div style={{
@@ -627,94 +739,6 @@ function EmptyChartState() {
   );
 }
 
-function ChartsPanel({ runTrend = [], hoursTrend = [], statusSummary }) {
-  const statusData = statusSummary ? [
-    { name: "Running", value: statusSummary.started, color: CHART_COLORS.warning },
-    { name: "Success", value: statusSummary.success, color: CHART_COLORS.success },
-    { name: "Failed", value: statusSummary.failed, color: CHART_COLORS.danger },
-  
-  ].filter((d) => d.value > 0) : [];
-
-  const totalRuns = (runTrend || []).reduce((s, d) => s + (d.runs || 0), 0);
-  const totalHours = (hoursTrend || []).reduce((s, d) => s + (d.hours || 0), 0);
-
-  return (
-    <div style={{ marginTop: 16 }}>
-      <div style={{ display: "grid", gridTemplateColumns: "1.3fr 1.3fr 1fr", gap: 16 }}>
-        <ChartCard title="Runs over time" totalValue={totalRuns} totalLabel="total runs" totalTone="accent2">
-          {runTrend.length === 0 ? (
-            <EmptyChartState />
-          ) : (
-            <ResponsiveContainer width="100%" height="100%">
-              <AreaChart data={runTrend} margin={{ top: 4, right: 8, left: -18, bottom: 0 }}>
-                <defs>
-                  <linearGradient id="runsGrad" x1="0" y1="0" x2="0" y2="1">
-                    <stop offset="0%" stopColor={CHART_COLORS.accent2} stopOpacity={0.35} />
-                    <stop offset="100%" stopColor={CHART_COLORS.accent2} stopOpacity={0} />
-                  </linearGradient>
-                </defs>
-                <CartesianGrid stroke={CHART_COLORS.border} vertical={false} />
-                <XAxis dataKey="date" stroke={CHART_COLORS.muted} fontSize={11} tickLine={false} axisLine={false} />
-                <YAxis stroke={CHART_COLORS.muted} fontSize={11} tickLine={false} axisLine={false} allowDecimals={false} />
-                <Tooltip content={<ChartTooltip />} />
-                <Area type="monotone" dataKey="runs" name="Runs" stroke={CHART_COLORS.accent2} strokeWidth={2} fill="url(#runsGrad)" />
-              </AreaChart>
-            </ResponsiveContainer>
-          )}
-        </ChartCard>
-
-        <ChartCard title="Hours saved over time" totalValue={totalHours ? totalHours.toFixed(1) : 0} totalLabel="hours saved" totalTone="success">
-          {hoursTrend.length === 0 ? (
-            <EmptyChartState />
-          ) : (
-            <ResponsiveContainer width="100%" height="100%">
-              <BarChart data={hoursTrend} margin={{ top: 4, right: 8, left: -18, bottom: 0 }}>
-                <defs>
-                  <linearGradient id="hoursGrad" x1="0" y1="0" x2="0" y2="1">
-                    <stop offset="0%" stopColor={CHART_COLORS.success} stopOpacity={0.9} />
-                    <stop offset="100%" stopColor={CHART_COLORS.success} stopOpacity={0.35} />
-                  </linearGradient>
-                </defs>
-                <CartesianGrid stroke={CHART_COLORS.border} vertical={false} />
-                <XAxis dataKey="date" stroke={CHART_COLORS.muted} fontSize={11} tickLine={false} axisLine={false} />
-                <YAxis stroke={CHART_COLORS.muted} fontSize={11} tickLine={false} axisLine={false} />
-                <Tooltip content={<ChartTooltip />} />
-                <Bar dataKey="hours" name="Hours saved" fill="url(#hoursGrad)" radius={[4, 4, 0, 0]} />
-              </BarChart>
-            </ResponsiveContainer>
-          )}
-        </ChartCard>
-
-        <ChartCard title="Status breakdown">
-          {statusData.length === 0 ? (
-            <EmptyChartState />
-          ) : (
-            <ResponsiveContainer width="100%" height="100%">
-              <PieChart>
-                <Pie
-                  data={statusData} dataKey="value" nameKey="name"
-                  innerRadius={45} outerRadius={70} paddingAngle={3}
-                  stroke="none"
-                >
-                  {statusData.map((d, i) => <Cell key={i} fill={d.color} />)}
-                </Pie>
-                <Tooltip content={<ChartTooltip />} />
-                <Legend
-                  verticalAlign="bottom" height={28}
-                  formatter={(value) => <span style={{ color: "var(--text-muted)", fontSize: 12 }}>{value}</span>}
-                />
-              </PieChart>
-            </ResponsiveContainer>
-          )}
-        </ChartCard>
-      </div>
-    </div>
-  );
-}
-
-/* ------------------------------------------------------------------ */
-/* Login screen                                                        */
-/* ------------------------------------------------------------------ */
 function VitalsMark({ active }) {
   return (
     <div style={{ position: "relative", height: 30, overflow: "hidden", opacity: active ? 1 : 0.25 }}>
@@ -778,33 +802,42 @@ function ExecutionPulseBar({ events, connected }) {
 }
 
 function LoginScreen({ onLogin, sessionMessage, theme, toggleTheme }) {
-  const [baseUrl, setBaseUrl] = useState("http://127.0.0.1:8000");
+  const [baseUrl, setBaseUrl] = useState(window.location.origin);
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
-  const [debugLog, setDebugLog] = useState([]);
-
-  const log = (msg) => setDebugLog((prev) => [...prev, `${new Date().toLocaleTimeString()} — ${msg}`]);
+  const [isLocked, setIsLocked] = useState(false);
+  const [showLockedModal, setShowLockedModal] = useState(false);
 
   const submit = async (e) => {
     e.preventDefault();
     setError("");
-    setDebugLog([]);
-    log("Sign in clicked.");
+    setIsLocked(false);
+    setShowLockedModal(false);
     setLoading(true);
+
     try {
-      log(`Sending request to ${baseUrl}/auth/login ...`);
       const res = await fetch(`${baseUrl}/auth/login`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ email, password }),
       });
-      log(`Response received. Status: ${res.status}`);
+
       const data = await res.json();
-      log(`Response body parsed.`);
-      if (!res.ok) throw new Error(data?.message || data?.detail?.[0]?.msg || "Login failed.");
-      log("Login successful, entering app...");
+      if (!res.ok) {
+        const errorMsg = data?.message || (typeof data?.detail === "string" ? data.detail : data?.detail?.[0]?.msg) || "Login failed.";
+        const accountIsLocked = data?.code === "ACCOUNT_LOCKED" || (
+          !errorMsg.toLowerCase().includes("remaining") &&
+          (errorMsg.toLowerCase().includes("account locked") || errorMsg.toLowerCase().includes("contact admin"))
+        );
+        if (accountIsLocked) {
+          setIsLocked(true);
+          setShowLockedModal(true);
+        }
+        throw new Error(errorMsg);
+      }
+
       onLogin({
         baseUrl,
         token: data.access_token,
@@ -814,7 +847,6 @@ function LoginScreen({ onLogin, sessionMessage, theme, toggleTheme }) {
         email,
       });
     } catch (err) {
-      log(`ERROR: ${err.message}`);
       setError(err.message || "Could not reach the server.");
     } finally {
       setLoading(false);
@@ -822,84 +854,181 @@ function LoginScreen({ onLogin, sessionMessage, theme, toggleTheme }) {
   };
 
   return (
-    <div className="hb-root" data-theme={theme} style={{
-      display: "flex", alignItems: "center", justifyContent: "center", padding: 20, position: "relative",
-    }}>
-      <button
-        onClick={toggleTheme}
-        title={theme === "dark" ? "Switch to light mode" : "Switch to dark mode"}
-        aria-label="Toggle theme"
-        style={{
-          position: "absolute", top: 20, right: 20,
-          display: "inline-flex", alignItems: "center", gap: 7,
-          background: "var(--surface)", border: "1px solid var(--border)",
-          borderRadius: 999, padding: "7px 12px", color: "var(--text-muted)",
-          fontSize: 12, fontWeight: 600, transition: "border-color .15s, color .15s",
-        }}
-        onMouseEnter={(e) => { e.currentTarget.style.borderColor = "var(--border-hover)"; e.currentTarget.style.color = "var(--text)"; }}
-        onMouseLeave={(e) => { e.currentTarget.style.borderColor = "var(--border)"; e.currentTarget.style.color = "var(--text-muted)"; }}
-      >
-        {theme === "dark" ? <Sun size={14} /> : <Moon size={14} />}
-        {theme === "dark" ? "Light" : "Dark"}
-      </button>
+    <div className="hb-root hb-login-root" data-theme={theme}>
 
-      <div style={{ width: 380, maxWidth: "100%" }}>
-        <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 6, justifyContent: "center" }}>
-          <Activity size={22} color="var(--accent)" />
-          <span style={{ fontFamily: "var(--font-display)", fontSize: 22, fontWeight: 700, letterSpacing: -0.3 }}>HeartBeat</span>
-        </div>
-        <VitalsMark active={true} />
-        <div style={{ textAlign: "center", color: "var(--text-muted)", fontSize: 13, marginBottom: 24 }}>
-          RPA fleet monitoring for StayAhead Legal
-        </div>
+      <div className="hb-login-orb hb-login-orb-a" />
+      <div className="hb-login-orb hb-login-orb-b" />
 
-        <form onSubmit={submit} style={{
-          background: "var(--surface)", border: "1px solid var(--border)",
-          borderRadius: 16, padding: 26,
-        }}>
-          <ErrorBanner message={error} onDismiss={() => setError("")} />
-          {!error && <InfoBanner message={sessionMessage} />}
+      <div className={`hb-login-lit-zone${theme === "light" ? " is-lit" : ""}`}>
+        <LampThemeToggle theme={theme} toggleTheme={toggleTheme} />
 
-          <Field label="Backend URL">
-            <input style={inputStyle} value={baseUrl} onChange={(e) => setBaseUrl(e.target.value)} />
-          </Field>
-          <Field label="Email">
-            <input style={inputStyle} type="email" required value={email}
-              onChange={(e) => setEmail(e.target.value)} placeholder="you@stayahead.com" />
-          </Field>
-          <Field label="Password">
-            <PasswordField
-              value={password}
-              onChange={(e) => setPassword(e.target.value)}
-              placeholder="••••••••"
-              required
-              autoComplete="current-password"
-            />
-          </Field>
-
-          <Button type="submit" disabled={loading} style={{ width: "100%", justifyContent: "center", marginTop: 4 }}>
-            {loading ? <Loader2 size={15} style={{ animation: "hb-spin 1s linear infinite" }} /> : null}
-            {loading ? "Signing in…" : "Sign in"}
-          </Button>
-        </form>
-
-        {debugLog.length > 0 && (
-          <div style={{
-            marginTop: 16, background: "var(--surface-2)", border: "1px solid var(--border)",
-            borderRadius: 10, padding: 12, fontFamily: "var(--font-mono)", fontSize: 11.5,
-            color: "var(--text-muted)", maxHeight: 160, overflowY: "auto",
-          }} className="hb-scroll">
-            {debugLog.map((line, i) => (
-              <div key={i} style={{ marginBottom: 4, color: line.includes("ERROR") ? "var(--danger)" : "var(--text-muted)" }}>
-                {line}
-              </div>
-            ))}
+        <div className="hb-login-card-wrap">
+          <div className="hb-login-brand">
+            <div className="hb-login-mark">
+              <Activity size={22} />
+            </div>
+            <div>
+              <div className="hb-login-brand-name">HeartBeat</div>
+              <div className="hb-login-brand-sub">RPA fleet monitoring for StayAhead Legal</div>
+            </div>
           </div>
-        )}
+
+          <VitalsMark active={true} />
+
+          <div className="hb-login-status">
+            <span />
+            Secure monitoring console
+          </div>
+
+          <form onSubmit={submit} className="hb-login-form">
+            <ErrorBanner message={error} onDismiss={() => { setError(""); setIsLocked(false); }} />
+            {isLocked && (
+              <div style={{
+                marginTop: -8, marginBottom: 16, padding: "10px 14px", borderRadius: 8,
+                background: "rgba(239, 68, 68, 0.12)", border: "1px solid rgba(239, 68, 68, 0.3)",
+                fontSize: 12.5, color: "var(--danger)", display: "flex", alignItems: "center", justifyContent: "space-between", gap: 10
+              }}>
+                {/* <span style={{ display: "flex", alignItems: "center", gap: 6 }}>
+                  <ShieldAlert size={15} style={{ flexShrink: 0 }} />
+                  <span>Account locked after 3 failed login attempts.</span>
+                </span> */}
+                <button
+                  type="button"
+                  onClick={() => setShowLockedModal(true)}
+                  style={{
+                    background: "none", border: "none", cursor: "pointer",
+                    color: "var(--danger)", fontWeight: 700, textDecoration: "underline", whiteSpace: "nowrap", marginLeft: "98px",
+                  }}
+                >
+                  Contact Admin
+                </button>
+              </div>
+            )}
+            {!error && <InfoBanner message={sessionMessage} />}
+
+            {/* <Field label="Backend URL">
+            <input
+              className="hb-control"
+              value={baseUrl}
+              onChange={(e) => setBaseUrl(e.target.value)}
+              autoComplete="url"
+            />
+          </Field> */}
+
+            <Field label="Email">
+              <input
+                className="hb-control"
+                type="email"
+                required
+                value={email}
+                onChange={(e) => setEmail(e.target.value)}
+                placeholder="you@stayahead.com"
+                autoComplete="username"
+              />
+            </Field>
+
+            <Field label="Password">
+              <PasswordField
+                value={password}
+                onChange={(e) => setPassword(e.target.value)}
+                placeholder="••••••••"
+                required
+                autoComplete="current-password"
+              />
+            </Field>
+
+            <Button
+              type="submit"
+              disabled={loading}
+              style={{ width: "100%", justifyContent: "center", marginTop: 4 }}
+            >
+              {loading ? <Loader2 size={15} style={{ animation: "hb-spin 1s linear infinite" }} /> : null}
+              {loading ? "Signing in…" : "Sign in"}
+            </Button>
+
+            <div className="hb-login-contact">
+              <span>Need help?</span>
+              <a href="mailto:rpa.support@thestayahead.com">
+                Contact StayAhead Support
+              </a>
+            </div>
+          </form>
+        </div>
       </div>
+
+      {showLockedModal && (
+        <Modal title="Account Locked" onClose={() => setShowLockedModal(false)} width={450}>
+          <div style={{ textAlign: "center", padding: "6px 4px 10px" }}>
+            <div style={{
+              width: 52, height: 52, borderRadius: "50%",
+              background: "rgba(239, 68, 68, 0.12)", border: "1px solid rgba(239, 68, 68, 0.28)",
+              color: "var(--danger)", display: "flex", alignItems: "center", justifyContent: "center",
+              margin: "0 auto 14px"
+            }}>
+              <ShieldAlert size={28} />
+            </div>
+
+            <div style={{ fontSize: 16, fontWeight: 700, marginBottom: 6, color: "var(--text-main)" }}>
+              Account Security Lockout
+            </div>
+
+            <p style={{ fontSize: 13, color: "var(--text-dim)", lineHeight: 1.5, margin: "0 auto 16px", maxWidth: 360 }}>
+              Your account {email ? <strong>({email})</strong> : ""} has been locked after <strong>3 failed login attempts</strong> to protect system security.
+            </p>
+
+            <div style={{
+              background: "rgba(239, 68, 68, 0.06)",
+              border: "1px solid rgba(239, 68, 68, 0.2)",
+              borderRadius: 10,
+              padding: "12px 14px",
+              fontSize: 12.5,
+              color: "var(--text-main)",
+              marginBottom: 20,
+              textAlign: "left",
+              lineHeight: 1.5
+            }}>
+              <div style={{ fontWeight: 600, marginBottom: 4, color: "var(--danger)" }}>Action Required:</div>
+              <div>Please reach out to your system administrator to verify your credentials and restore your account access.</div>
+            </div>
+
+            <div style={{ display: "flex", gap: 10, justifyContent: "flex-end" }}>
+              <button
+                type="button"
+                onClick={() => setShowLockedModal(false)}
+                className="hb-btn hb-btn-secondary"
+                style={{ padding: "8px 16px", borderRadius: 8, }}
+
+              >
+                Dismiss
+              </button>
+              <a
+                href={`mailto:rpa.support@thestayahead.com?subject=Account%20Unlock%20Request%20(${encodeURIComponent(email || "User")})&body=Hello%20Administrator,%0D%0A%0D%0AMy%20account%20(${encodeURIComponent(email || "")})%20has%20been%20locked%20after%203%20failed%20login%20attempts.%20Please%20unlock%20my%20account.%0D%0A%0D%0AThank%20you.`}
+                className="hb-btn hb-btn-primary"
+                style={{
+                  padding: "8px 16px",
+                  background: "var(--danger)",
+                  borderColor: "var(--danger)",
+                  borderRadius: 8,
+                  display: "inline-flex",
+                  alignItems: "center",
+                  gap: 6,
+                  textDecoration: "none",
+                  color: "white",
+                }}
+              >
+                <Mail size={15} />
+                Contact Admin
+              </a>
+            </div>
+          </div>
+        </Modal>
+      )}
     </div>
   );
 }
+
+/* ------------------------------------------------------------------ */
+/* Unified filter system
 
 /* ------------------------------------------------------------------ */
 /* Unified filter system — one "Filters" button opens a popover panel   */
@@ -947,11 +1076,34 @@ function useClientOptions(api) {
 }
 
 const PERIOD_OPTIONS = [
+  { value: "day", label: "Today" },
   { value: "week", label: "This week" },
   { value: "month", label: "This month" },
   { value: "all", label: "All time" },
 ];
 
+/* Client-side period filter — for views (like Logs) whose backend
+   endpoint doesn't take a period param. Mirrors the day/week/month/all
+   buckets used everywhere else in the app. */
+function isWithinPeriod(iso, period) {
+  if (!period || period === "all") return true;
+  if (!iso) return false;
+  const date = new Date(iso);
+  if (isNaN(date.getTime())) return false;
+  const now = new Date();
+  if (period === "day") {
+    return date.toDateString() === now.toDateString();
+  }
+  if (period === "week") {
+    const weekAgo = new Date(now.getTime() - 7 * 24 * 60 * 60 * 1000);
+    return date >= weekAgo;
+  }
+  if (period === "month") {
+    const monthAgo = new Date(now.getTime() - 30 * 24 * 60 * 60 * 1000);
+    return date >= monthAgo;
+  }
+  return true;
+}
 /* A single filter group: icon + label + native <select>, used inside
    the popover panel. Kept as a native select for accessibility and
    mobile-friendliness — only the panel chrome around it is custom. */
@@ -975,6 +1127,8 @@ function FilterGroupRow({ icon: Icon, label, value, onChange, options, placehold
     </div>
   );
 }
+
+
 
 /* The trigger button + popover panel. `groups` is an array of:
    { key, icon, label, value, onChange, options, placeholder?, isActive? }
@@ -1126,14 +1280,13 @@ function SearchBar({ value, onChange, placeholder = "Search…" }) {
   );
 }
 
-/* Segmented status filter for Recent Runs — All / Success / Failed / Running */
-function StatusFilterTabs({ value, onChange }) {
+/* Segmented status filter for Recent Runs — All / Running / Success / Failed */
+function StatusFilterTabs({ value, onChange, counts = null }) {
   const options = [
-    { key: "Started", label: "Running", color: "var(--warning)" },
     { key: "all", label: "All", color: "var(--text-muted)" },
+    { key: "Started", label: "Running", color: "var(--warning)" },
     { key: "Success", label: "Success", color: "var(--success)" },
     { key: "Failed", label: "Failed", color: "var(--danger)" },
-    
   ];
   return (
     <div style={{
@@ -1142,23 +1295,99 @@ function StatusFilterTabs({ value, onChange }) {
     }}>
       {options.map((o) => {
         const active = value === o.key;
+        const count = counts ? counts[o.key] : null;
         return (
           <button
             key={o.key}
+            type="button"
             onClick={() => onChange(o.key)}
             style={{
               border: "none", borderRadius: 6, padding: "5px 10px", fontSize: 11.5, fontWeight: 600,
               background: active ? "var(--surface-3)" : "transparent",
               color: active ? o.color : "var(--text-dim)",
               display: "inline-flex", alignItems: "center", gap: 5,
+              cursor: "pointer",
               transition: "background .15s, color .15s",
             }}
           >
             <span style={{ width: 6, height: 6, borderRadius: "50%", background: o.color, flexShrink: 0, opacity: active ? 1 : 0.5 }} />
-            {o.label}
+            <span>{o.label}</span>
+            {count != null && (
+              <span style={{
+                fontSize: 10, padding: "1px 5px", borderRadius: 10,
+                background: active ? "var(--surface-2)" : "var(--surface-3)",
+                color: active ? o.color : "var(--text-dim)",
+                fontWeight: 700,
+              }}>
+                {count}
+              </span>
+            )}
           </button>
         );
       })}
+    </div>
+  );
+}
+
+/* Date filter tabs for Execution History — Today / Yesterday / Last 5 days / Custom Date */
+function RunDateFilterTabs({ value, onChange, customDate, onCustomDateChange, counts }) {
+  return (
+    <div className="hb-runs-date-tabs">
+      <div className="hb-runs-date-group">
+        <button
+          type="button"
+          className={`hb-runs-date-btn ${value === "today" ? "active" : ""}`}
+          onClick={() => onChange("today")}
+        >
+          <span>Today</span>
+          {counts?.today != null && counts.today > 0 && (
+            <span className="hb-runs-tab-badge">{counts.today}</span>
+          )}
+        </button>
+        <button
+          type="button"
+          className={`hb-runs-date-btn ${value === "yesterday" ? "active" : ""}`}
+          onClick={() => onChange("yesterday")}
+        >
+          <span>Yesterday</span>
+          {counts?.yesterday != null && counts.yesterday > 0 && (
+            <span className="hb-runs-tab-badge">{counts.yesterday}</span>
+          )}
+        </button>
+        <button
+          type="button"
+          className={`hb-runs-date-btn ${value === "5days" ? "active" : ""}`}
+          onClick={() => onChange("5days")}
+        >
+          <span>Last 5 days</span>
+        </button>
+      </div>
+
+      <div className="hb-custom-date-container">
+        <input
+          type="date"
+          className={`hb-custom-date-input ${value === "custom" ? "active" : ""}`}
+          value={customDate || ""}
+          onChange={(e) => {
+            onCustomDateChange(e.target.value);
+            if (e.target.value) onChange("custom");
+          }}
+          title="Pick custom date"
+        />
+        {value === "custom" && customDate && (
+          <button
+            type="button"
+            className="hb-clear-date-btn"
+            onClick={() => {
+              onCustomDateChange("");
+              onChange("today");
+            }}
+            title="Reset to today"
+          >
+            <X size={12} />
+          </button>
+        )}
+      </div>
     </div>
   );
 }
@@ -1181,59 +1410,6 @@ function useEventRate(events) {
   return rate;
 }
 
-function VitalsStrip({ events, connected }) {
-  const rate = useEventRate(events);
-  const lastFailed = events[0]?.status === "Failed";
-  const lineColor = lastFailed ? "var(--danger)" : "var(--accent)";
-  const speed = Math.max(1.1, 3.2 - Math.min(rate, 15) * 0.12);
-
-  return (
-    <div style={{
-      display: "flex", alignItems: "center", gap: 22,
-      background: "linear-gradient(180deg, var(--surface) 0%, var(--surface-2) 100%)",
-      border: "1px solid var(--border)", borderRadius: 16, padding: "16px 22px 16px 24px",
-      marginBottom: 20,
-    }}>
-      <div style={{ flexShrink: 0 }}>
-        {connected
-          ? <Badge tone={lastFailed ? "danger" : "success"}><Wifi size={11} /> live</Badge>
-          : <Badge tone="muted"><WifiOff size={11} /> offline</Badge>}
-      </div>
-      <div style={{ position: "relative", flex: 1, height: 50, overflow: "hidden" }}>
-        <svg width="200%" height="50" viewBox="0 0 900 50" style={{
-          animation: connected ? `hb-flow ${speed}s linear infinite` : "none",
-          opacity: connected ? 1 : 0.25,
-        }}>
-          <defs>
-            <linearGradient id="vitalsGrad" x1="0" x2="1">
-              <stop offset="0%" stopColor={lineColor} stopOpacity="0" />
-              <stop offset="50%" stopColor={lineColor} stopOpacity="1" />
-              <stop offset="100%" stopColor={lineColor} stopOpacity="0" />
-            </linearGradient>
-          </defs>
-          {[0, 450].map((o) => (
-            <path key={o}
-              d={`M${o},25 L${o + 140},25 L${o + 160},6 L${o + 182},44 L${o + 200},25 L${o + 450},25`}
-              fill="none" stroke="url(#vitalsGrad)" strokeWidth="2.5" strokeLinecap="round" />
-          ))}
-        </svg>
-      </div>
-      <div style={{ textAlign: "right", flexShrink: 0, minWidth: 78 }}>
-        <div style={{
-          fontFamily: "var(--font-mono)", fontSize: 32, fontWeight: 600, lineHeight: 1,
-          color: lineColor, animation: connected && rate > 0 ? "hb-glow 1.6s ease-in-out infinite" : "none",
-        }}>
-          {rate}
-        </div>
-        <div className="hb-eyebrow" style={{ marginTop: 4 }}>runs / min</div>
-      </div>
-    </div>
-  );
-}
-
-/* Detail popover: exact running bot names + status for one client,
-   opened by clicking that client's chip. Pulls from
-   /dashboard/running-bots?client_id=X (not just an aggregate count). */
 function ClientBotDetailModal({ api, client, onClose }) {
   const [bots, setBots] = useState([]);
   const [loading, setLoading] = useState(true);
@@ -1390,7 +1566,7 @@ function ExecutionPulse({ wsConnected, statusSummary, runningCount }) {
     <div className="hb-pulse-panel">
       <div className="hb-pulse-header">
         <div>
-          
+
           <div className="hb-pulse-title">Live automation Heartbeat</div>
         </div>
         <Badge tone={wsConnected ? "success" : "muted"}>
@@ -1455,18 +1631,6 @@ function DashboardMetric({ icon: Icon, label, value, tone = "accent", note, puls
   );
 }
 
-function DashboardValueCard({ label, value, caption, tone = "accent", icon: Icon }) {
-  const color = tone === "success" ? "var(--success)" : tone === "danger" ? "var(--danger)" : "var(--accent)";
-  return (
-    <div className="hb-value-card">
-      <div className="hb-value-card-icon" style={{ color }}><Icon size={17} /></div>
-      <div className="hb-eyebrow">{label}</div>
-      <div className="hb-value-card-value" style={{ color }}>{value}</div>
-      <div className="hb-value-card-caption">{caption}</div>
-    </div>
-  );
-}
-
 function DashboardChartPanel({ title, subtitle, children, accent = "accent" }) {
   return (
     <div className={`hb-analytics-card hb-analytics-${accent}`}>
@@ -1514,7 +1678,620 @@ function DashboardStatusBreakdown({ statusSummary }) {
   );
 }
 
-function DashboardView({ api, wsConnected, liveEvents, role, session }) {
+function formatSavedMinutes(hours) {
+  const numericHours = Number(hours);
+  if (!Number.isFinite(numericHours)) return "—";
+  return `${Math.max(0, Math.round(numericHours * 60)).toLocaleString()} min`;
+}
+
+function HoursSavedRing({ totalHours, dayCount }) {
+  // Fullness is relative to a soft daily-target reference so the ring means
+  // something (not just an arbitrary fill) without inventing backend data.
+  const dailyTarget = 4; // hrs/day reference — adjust to your team's benchmark
+  const pct = dayCount > 0 ? Math.min(100, Math.round((totalHours / (dailyTarget * dayCount)) * 100)) : 0;
+  return (
+    <div style={{ display: "flex", alignItems: "center", justifyContent: "center", height: "100%" }}>
+      <div
+        className="hb-status-ring"
+        style={{ background: `conic-gradient(var(--success) ${pct}%, var(--surface-3) ${pct}% 100%)` }}
+      >
+        <div><strong>{totalHours.toFixed(1)}</strong><span>{formatSavedMinutes(totalHours)}</span></div>
+      </div>
+    </div>
+  );
+}
+
+function FleetOverviewCard({ summary, isAdmin }) {
+  const totalBots = summary?.total_bots ?? "—";
+  const totalClients = summary?.total_clients ?? "—";
+
+  return (
+    <div className={`hb-fleet-card-v2 hb-fleet-card-premium${isAdmin ? " is-admin" : ""}`}>
+      <div className="hb-fleet-v2-glow" />
+      <div className="hb-fleet-orbit orbit-one" />
+      <div className="hb-fleet-orbit orbit-two" />
+      <div className="hb-fleet-core"><Bot size={22} strokeWidth={1.8} /></div>
+      <div className="hb-fleet-v2-top">
+        <div>
+          <span className="hb-fleet-v2-kicker">{isAdmin ? "FLEET OVERVIEW" : "ROBOT FLEET"}</span>
+          <strong>{isAdmin ? "Overall operations" : "All robots"}</strong>
+        </div>
+      </div>
+      <div className={`hb-fleet-v2-metrics${isAdmin ? " two" : " one"}`}>
+        <div className="hb-fleet-v2-metric">
+          <span className="hb-fleet-v2-icon"><Bot size={15} /></span>
+          <span className="hb-fleet-v2-value">{totalBots}</span>
+          <span className="hb-fleet-v2-label">Robots</span>
+        </div>
+        {isAdmin && (
+          <div className="hb-fleet-v2-metric">
+            <span className="hb-fleet-v2-icon clients"><Users size={15} /></span>
+            <span className="hb-fleet-v2-value">{totalClients}</span>
+            <span className="hb-fleet-v2-label">Clients</span>
+          </div>
+        )}
+      </div>
+      <div className="hb-fleet-v2-line" />
+    </div>
+  );
+}
+function RunLogViewer({ api, bot, run, attachment, onClose }) {
+  const [content, setContent] = useState("");
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState("");
+  const [copiedLog, setCopiedLog] = useState(false);
+  const [copiedLink, setCopiedLink] = useState(false);
+
+  useEffect(() => {
+    let cancelled = false;
+
+    (async () => {
+      setLoading(true);
+      setError("");
+      try {
+        const text = await api(
+          `/dashboard/bot-runs/${run?.run_id}/logs/${attachment?.attachment_id}`,
+          { responseType: "text" }
+        );
+        if (!cancelled) setContent(text || "");
+      } catch (err) {
+        if (!cancelled) setError(err.message);
+      } finally {
+        if (!cancelled) setLoading(false);
+      }
+    })();
+
+    return () => { cancelled = true; };
+  }, [api, run?.run_id, attachment?.attachment_id]);
+
+  const logPath = `/dashboard/bot-runs/${run?.run_id}/logs/${attachment?.attachment_id}`;
+  const logLink = api?.baseUrl ? `${api.baseUrl}${logPath}` : logPath;
+
+  const copyLogContent = async () => {
+    try {
+      await navigator.clipboard.writeText(content || "");
+      setCopiedLog(true);
+      window.setTimeout(() => setCopiedLog(false), 1500);
+    } catch (_) {
+      setError("Unable to copy the log content.");
+    }
+  };
+
+  const copyLogLink = async () => {
+    try {
+      await navigator.clipboard.writeText(logLink);
+      setCopiedLink(true);
+      window.setTimeout(() => setCopiedLink(false), 1500);
+    } catch (_) {
+      setError("Unable to copy the log link.");
+    }
+  };
+
+  return (
+    <Modal title={`${attachment?.filename || "Log"} — details`} onClose={onClose} width={900}>
+      <ErrorBanner message={error} onDismiss={() => setError("")} />
+      <div style={{
+        display: "flex", alignItems: "center", justifyContent: "space-between",
+        gap: 12, marginBottom: 12, padding: "10px 12px",
+        border: "1px solid var(--border)", borderRadius: 10,
+        background: "var(--surface-2)",
+        flexWrap: "wrap",
+      }}>
+        <div style={{ minWidth: 0 }}>
+          <div style={{ fontWeight: 650, fontSize: 13 }}>{bot?.bot_name || "Bot"}</div>
+          <div style={{ color: "var(--text-dim)", fontSize: 11, marginTop: 3 }}>
+            Run #{run?.run_id} · {attachment?.filename}
+          </div>
+        </div>
+        <div style={{ display: "flex", alignItems: "center", gap: 8, flexShrink: 0 }}>
+          <button
+            type="button"
+            onClick={copyLogContent}
+            disabled={loading}
+            title="Copy the full log content"
+            style={{
+              display: "inline-flex", alignItems: "center", gap: 5,
+              background: "var(--surface-3)", border: "1px solid var(--border)",
+              color: copiedLog ? "var(--success)" : "var(--text-muted)",
+              borderRadius: 8, padding: "6px 9px", fontSize: 11.5, fontWeight: 600,
+              opacity: loading ? 0.5 : 1,
+            }}
+          >
+            {copiedLog ? <Check size={12} /> : <Copy size={12} />} {copiedLog ? "Copied" : "Copy log"}
+          </button>
+          <button
+            type="button"
+            onClick={copyLogLink}
+            disabled={loading}
+            title="Copy a link to this log"
+            style={{
+              display: "inline-flex", alignItems: "center", gap: 5,
+              background: "var(--surface-3)", border: "1px solid var(--border)",
+              color: copiedLink ? "var(--success)" : "var(--text-muted)",
+              borderRadius: 8, padding: "6px 9px", fontSize: 11.5, fontWeight: 600,
+            }}
+          >
+            {copiedLink ? <Check size={12} /> : <Link2 size={12} />} {copiedLink ? "Copied" : "Copy link"}
+          </button>
+          <Badge tone={run?.status === "Success" ? "success" : run?.status === "Failed" ? "danger" : "warning"}>
+            {run?.status || "—"}
+          </Badge>
+        </div>
+      </div>
+
+      <pre className="hb-scroll" style={{
+        margin: 0,
+        maxHeight: "62vh",
+        overflow: "auto",
+        padding: 15,
+        border: "1px solid var(--border)",
+        borderRadius: 11,
+        background: "var(--surface-3)",
+        color: "var(--text-muted)",
+        fontFamily: "var(--font-mono)",
+        fontSize: 11.5,
+        lineHeight: 1.65,
+        whiteSpace: "pre-wrap",
+        wordBreak: "break-word",
+      }}>
+        {loading ? "Loading log…" : content || "Log file is empty."}
+      </pre>
+    </Modal>
+  );
+}
+
+function OverallRunsCard({ totalRuns, successfulRuns }) {
+  const runs = Number(totalRuns || 0);
+  const success = Number(successfulRuns || 0);
+  const successRate = runs > 0 ? Math.round((success / runs) * 100) : 0;
+  const animatedRuns = useCountUp(runs);
+
+  return (
+    <div className="hb-overall-runs-card">
+      <div className="hb-overall-runs-head">
+        <div>
+          <div className="hb-eyebrow">Overall runs</div>
+          <strong>Execution health</strong>
+        </div>
+        <div className="hb-overall-runs-icon"><Activity size={17} /></div>
+      </div>
+
+      <div className="hb-overall-runs-body">
+        <div className="hb-overall-runs-total">
+          <span>Total runs</span>
+          <strong>{Number(animatedRuns || 0).toLocaleString()}</strong>
+        </div>
+
+        <div className="hb-overall-runs-rate">
+          <div
+            className="hb-overall-runs-ring"
+            style={{ "--success-pct": `${successRate}%` }}
+          >
+            <div>
+              <strong>{successRate}%</strong>
+              <span>Success</span>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function ClientPerformanceCard({ totalRuns, successRate, hoursSaved }) {
+  const minutesSaved = Number.isFinite(Number(hoursSaved)) ? Math.max(0, Math.round(Number(hoursSaved) * 60)) : null;
+  const avgMinutes = Number(totalRuns) > 0 && minutesSaved != null ? Math.round(minutesSaved / Number(totalRuns)) : null;
+
+  return (
+    <div className="hb-client-performance-card">
+      <div className="hb-client-performance-head">
+        <div>
+          <div className="hb-eyebrow">Client value</div>
+          <div className="hb-client-performance-title">Automation performance</div>
+          <div className="hb-client-performance-subtitle">Selected period snapshot</div>
+        </div>
+        <div className="hb-client-performance-icon"><TrendingUp size={17} /></div>
+      </div>
+      <div className="hb-client-performance-grid">
+        <div className="hb-client-performance-stat"><span>Runs</span><strong>{Number(totalRuns || 0).toLocaleString()}</strong></div>
+        <div className="hb-client-performance-stat success"><span>Success rate</span><strong>{successRate != null ? `${successRate}%` : "—"}</strong></div>
+        <div className="hb-client-performance-stat"><span>Hours saved</span><strong>{hoursSaved != null ? `${Number(hoursSaved).toFixed(1)}h` : "—"}</strong><small>{minutesSaved != null ? `${minutesSaved.toLocaleString()} min total` : "—"}</small></div>
+        <div className="hb-client-performance-stat accent"><span>Avg. saved / run</span><strong>{avgMinutes != null ? `${avgMinutes}m` : "—"}</strong></div>
+      </div>
+      <div className="hb-client-performance-bar"><span style={{ width: `${Math.max(0, Math.min(100, Number(successRate || 0)))}%` }} /></div>
+      <div className="hb-client-performance-foot"><span>Automation success</span><b>{successRate != null ? `${successRate}%` : "No data"}</b></div>
+    </div>
+  );
+}
+
+function ClientTimezoneClocks({ timezone, isDrawer = false }) {
+  const [now, setNow] = useState(new Date());
+
+  useEffect(() => {
+    const timer = setInterval(() => {
+      setNow(new Date());
+    }, 1000);
+
+    return () => clearInterval(timer);
+  }, []);
+
+  if (!timezone) return null;
+
+  const clientTime = new Intl.DateTimeFormat("en-US", {
+    timeZone: timezone,
+    hour: "2-digit",
+    minute: "2-digit",
+    second: isDrawer ? undefined : "2-digit",
+    hour12: true,
+  }).format(now);
+
+  const stayAheadUSTime = new Intl.DateTimeFormat("en-US", {
+    timeZone: "America/Los_Angeles",
+    hour: "2-digit",
+    minute: "2-digit",
+    second: isDrawer ? undefined : "2-digit",
+    hour12: true,
+  }).format(now);
+
+  const stayAheadTime = new Intl.DateTimeFormat("en-US", {
+    timeZone: "Asia/Kolkata",
+    hour: "2-digit",
+    minute: "2-digit",
+    second: isDrawer ? undefined : "2-digit",
+    hour12: true,
+  }).format(now);
+
+  return (
+    <div className={`hb-topbar-clocks${isDrawer ? " hb-drawer-clocks" : ""}`}>
+      {/* Client Local Time */}
+      <div className="hb-topbar-clock-item">
+        <div className="hb-topbar-clock-label">Your Time Zone</div>
+        <div className="hb-topbar-clock-time client">{clientTime}</div>
+      </div>
+
+      <div className="hb-topbar-clock-divider" />
+
+      {/* StayAhead US */}
+      <div className="hb-topbar-clock-item">
+        <div className="hb-topbar-clock-label">StayAhead US</div>
+        <div className="hb-topbar-clock-time">{stayAheadUSTime}</div>
+      </div>
+
+      <div className="hb-topbar-clock-divider" />
+
+      {/* StayAhead India */}
+      <div className="hb-topbar-clock-item">
+        <div className="hb-topbar-clock-label">StayAhead India</div>
+        <div className="hb-topbar-clock-time">{stayAheadTime}</div>
+      </div>
+    </div>
+  );
+}
+
+/* ------------------------------------------------------------------ */
+/* NEW: EditUserModal — insert this right after ResetPasswordModal      */
+/* ------------------------------------------------------------------ */
+function EditUserModal({ api, user, onClose, onUpdated }) {
+  const [role, setRole] = useState(user.role);
+  const [status, setStatus] = useState(user.status);
+  const [clientId, setClientId] = useState(user.client_id || "");
+  const [clients, setClients] = useState([]);
+  const [error, setError] = useState("");
+  const [loading, setLoading] = useState(false);
+
+  useEffect(() => {
+    (async () => {
+      try {
+        const res = await api("/clients/");
+        setClients(res?.data || res || []);
+      } catch (_) { /* non-critical */ }
+    })();
+  }, [api]);
+
+  const submit = async (e) => {
+    e.preventDefault();
+    setError("");
+    setLoading(true);
+    try {
+      await api(`/auth/users/${user.user_id}`, {
+        method: "PATCH",
+        body: JSON.stringify({
+          role,
+          status,
+          client_id: role === "client" ? Number(clientId) : null,
+        }),
+      });
+      onUpdated();
+      onClose();
+    } catch (err) {
+      setError(err.message || "Failed to update user.");
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  return (
+    <Modal title={`Edit User — ${user.email}`} onClose={onClose} width={420}>
+      <form onSubmit={submit}>
+        <ErrorBanner message={error} onDismiss={() => setError("")} />
+
+        <Field label="Role">
+          <select style={inputStyle} value={role} onChange={(e) => setRole(e.target.value)}>
+            <option value="admin">Admin (Full Access)</option>
+            <option value="admin2">Admin 2 (View Only)</option>
+            <option value="admin3">Admin 3 (View Only)</option>
+            <option value="client">Client</option>
+          </select>
+        </Field>
+
+        {role === "client" && (
+          <Field label="Assign Client">
+            <select
+              style={inputStyle}
+              required
+              value={clientId}
+              onChange={(e) => setClientId(e.target.value)}
+            >
+              <option value="">Select a Client…</option>
+              {clients.map((c) => (
+                <option key={c.client_id} value={c.client_id}>
+                  {c.client_name}
+                </option>
+              ))}
+            </select>
+          </Field>
+        )}
+
+        <Field label="Status">
+          <select style={inputStyle} value={status} onChange={(e) => setStatus(e.target.value)}>
+            <option value="Active">Active</option>
+            <option value="Inactive">Inactive</option>
+          </select>
+        </Field>
+
+        <div style={{ display: "flex", gap: 10, justifyContent: "flex-end", marginTop: 14 }}>
+          <Button variant="ghost" onClick={onClose} type="button">Cancel</Button>
+          <Button type="submit" disabled={loading}>
+            {loading ? "Saving…" : "Save changes"}
+          </Button>
+        </div>
+      </form>
+    </Modal>
+  );
+}
+function UsersView({ api, currentEmail }) {
+  const [users, setUsers] = useState([]);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState("");
+  const [search, setSearch] = useState("");
+  const [roleFilter, setRoleFilter] = useState("");
+  const [resetTarget, setResetTarget] = useState(null);
+  const [editTarget, setEditTarget] = useState(null);
+  const [showCreateModal, setShowCreateModal] = useState(false);
+
+  const load = useCallback(async () => {
+    setLoading(true);
+    setError("");
+    try {
+      const res = await api("/auth/users");
+      setUsers(res?.data || res || []);
+    } catch (err) {
+      setError(err.message || "Failed to load user logins.");
+    } finally {
+      setLoading(false);
+    }
+  }, [api]);
+
+  useEffect(() => { load(); }, [load]);
+
+  const unlock = async (u) => {
+    setError("");
+    try {
+      await api(`/auth/users/${u.user_id}/unlock`, { method: "POST" });
+      load();
+    } catch (err) {
+      setError(err.message || "Failed to unlock user account.");
+    }
+  };
+
+  const isLocked = (u) => u.locked_until && new Date(u.locked_until).getTime() > Date.now();
+  const isSelf = (u) => currentEmail && u.email?.toLowerCase() === currentEmail.toLowerCase();
+
+  const filteredUsers = useMemo(() => {
+    const q = search.trim().toLowerCase();
+    return (users || []).filter((u) => {
+      const matchesSearch = !q || (u.email || "").toLowerCase().includes(q) || String(u.user_id).includes(q);
+      const matchesRole = !roleFilter || u.role === roleFilter;
+      return matchesSearch && matchesRole;
+    });
+  }, [users, search, roleFilter]);
+
+  return (
+    <div>
+      <ErrorBanner message={error} onDismiss={() => setError("")} />
+
+      <div style={{
+        display: "flex",
+        justifyContent: "space-between",
+        alignItems: "center",
+        gap: 12,
+        marginBottom: 16,
+        flexWrap: "wrap",
+      }}>
+        <div style={{ display: "flex", alignItems: "center", gap: 10, flex: "1 1 300px" }}>
+          <SearchBar
+            value={search}
+            onChange={setSearch}
+            placeholder="Search by user email…"
+          />
+          <select
+            value={roleFilter}
+            onChange={(e) => setRoleFilter(e.target.value)}
+            style={{ ...inputStyle, width: "auto", minWidth: 120, padding: "8px 10px" }}
+          >
+            <option value="">All Roles</option>
+            <option value="admin">Admin</option>
+            <option value="admin2">Admin 2</option>
+            <option value="admin3">Admin 3</option>
+            <option value="client">Client</option>
+          </select>
+        </div>
+
+        <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+          <Button variant="ghost" onClick={load}>
+            <RotateCcw size={13} className={loading ? "hb-spin" : ""} /> Refresh
+          </Button>
+          <Button onClick={() => setShowCreateModal(true)}>
+            <Plus size={14} /> New User
+          </Button>
+        </div>
+      </div>
+
+      <div style={{ background: "var(--surface)", border: "1px solid var(--border)", borderRadius: 14, overflow: "hidden" }}>
+        <div className="hb-scroll" style={{ overflowX: "auto" }}>
+          <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 13.5 }}>
+            <thead>
+              <tr style={{ borderBottom: "1px solid var(--border)" }}>
+                <th style={{ textAlign: "left", padding: "11px 16px", color: "var(--text-muted)", fontWeight: 500, fontSize: 12 }}>Email</th>
+                <th style={{ textAlign: "left", padding: "11px 16px", color: "var(--text-muted)", fontWeight: 500, fontSize: 12 }}>Role</th>
+                <th style={{ textAlign: "left", padding: "11px 16px", color: "var(--text-muted)", fontWeight: 500, fontSize: 12 }}>Status</th>
+                <th style={{ textAlign: "left", padding: "11px 16px", color: "var(--text-muted)", fontWeight: 500, fontSize: 12 }}>Login Status</th>
+                <th style={{ textAlign: "right", padding: "11px 16px", color: "var(--text-muted)", fontWeight: 500, fontSize: 12 }}>Actions</th>
+              </tr>
+            </thead>
+            <tbody>
+              {loading && (
+                <tr><td colSpan={5} style={{ padding: 28, textAlign: "center", color: "var(--text-dim)" }}>Loading users…</td></tr>
+              )}
+              {!loading && filteredUsers.length === 0 && (
+                <tr><td colSpan={5} style={{ padding: 28, textAlign: "center", color: "var(--text-dim)" }}>
+                  {users.length === 0 ? "No logins created yet." : "No users match your filter."}
+                </td></tr>
+              )}
+              {filteredUsers.map((u) => {
+                const locked = isLocked(u);
+                return (
+                  <tr key={u.user_id} className="hb-row-hover" style={{ borderBottom: "1px solid var(--border)" }}>
+                    <td style={{ padding: "11px 16px", fontWeight: 600 }}>{u.email}</td>
+                    <td style={{ padding: "11px 16px" }}>
+                      <Badge tone={["admin", "admin2", "admin3"].includes(u.role) ? "accent" : "muted"}>{u.role}</Badge>
+                    </td>
+                    <td style={{ padding: "11px 16px" }}>
+                      <Badge tone={u.status === "Active" ? "success" : "muted"}>{u.status}</Badge>
+                    </td>
+                    <td style={{ padding: "11px 16px" }}>
+                      {locked ? (
+                        <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
+                          <ShieldAlert size={14} color="var(--danger)" />
+                          <span style={{ color: "var(--danger)", fontSize: 12, fontWeight: 600 }}>
+                            Locked ({u.failed_login_attempts >= 3 ? "3/3 failed attempts" : "Contact Admin"})
+                          </span>
+                        </div>
+                      ) : u.failed_login_attempts > 0 ? (
+                        <span style={{ color: "var(--warning)", fontSize: 12.5, fontWeight: 500 }}>
+                          {u.failed_login_attempts} of 3 failed attempts
+                        </span>
+                      ) : (
+                        <span style={{ color: "var(--text-dim)", fontSize: 12.5 }}>Healthy</span>
+                      )}
+                    </td>
+                    <td style={{ padding: "11px 16px", textAlign: "right", whiteSpace: "nowrap" }}>
+                      {locked && (
+                        <button
+                          onClick={() => unlock(u)}
+                          title="Unlock account"
+                          style={{
+                            background: "var(--accent-dim)", border: "none", color: "var(--accent)",
+                            padding: "5px 8px", borderRadius: 6, marginRight: 6, cursor: "pointer",
+                            fontSize: 12, fontWeight: 600, display: "inline-flex", alignItems: "center", gap: 4
+                          }}
+                        >
+                          <Unlock size={13} /> Unlock
+                        </button>
+                      )}
+                      {!isSelf(u) && (
+                        <button
+                          onClick={() => setEditTarget(u)}
+                          title="Edit role, status or client"
+                          style={{
+                            background: "var(--surface-2)", border: "1px solid var(--border)",
+                            color: "var(--text-muted)", padding: "5px 8px", borderRadius: 6, marginRight: 6,
+                            cursor: "pointer", fontSize: 12, fontWeight: 600, display: "inline-flex", alignItems: "center", gap: 4
+                          }}
+                        >
+                          <Pencil size={13} /> Edit
+                        </button>
+                      )}
+                      <button
+                        onClick={() => setResetTarget(u)}
+                        title="Reset password"
+                        style={{
+                          background: "var(--surface-2)", border: "1px solid var(--border)",
+                          color: "var(--text-muted)", padding: "5px 8px", borderRadius: 6,
+                          cursor: "pointer", fontSize: 12, fontWeight: 600, display: "inline-flex", alignItems: "center", gap: 4
+                        }}
+                      >
+                        <KeyRound size={13} /> Reset Pass
+                      </button>
+                    </td>
+                  </tr>
+                );
+              })}
+            </tbody>
+          </table>
+        </div>
+      </div>
+
+      {showCreateModal && (
+        <CreateUserModal
+          api={api}
+          onClose={() => setShowCreateModal(false)}
+          onCreated={load}
+        />
+      )}
+
+      {resetTarget && (
+        <ResetPasswordModal
+          api={api}
+          user={resetTarget}
+          onClose={() => setResetTarget(null)}
+          onDone={() => { setResetTarget(null); load(); }}
+        />
+      )}
+
+      {editTarget && (
+        <EditUserModal
+          api={api}
+          user={editTarget}
+          onClose={() => setEditTarget(null)}
+          onUpdated={load}
+        />
+      )}
+    </div>
+  );
+}
+
+function DashboardView({ api, wsConnected, liveEvents, isAdmin, role, session }) {
   const [summary, setSummary] = useState(null);
   const [recent, setRecent] = useState([]);
   const [runTrendRaw, setRunTrendRaw] = useState([]);
@@ -1524,9 +2301,13 @@ function DashboardView({ api, wsConnected, liveEvents, role, session }) {
   const [department, setDepartment] = useState(null);
   const [clientId, setClientId] = useState(null);
   const [recentStatusFilter, setRecentStatusFilter] = useState("all");
+  const [recentDateFilter, setRecentDateFilter] = useState("today");
+  const [customRunDate, setCustomRunDate] = useState("");
+  const [selectedRunLog, setSelectedRunLog] = useState(null);
+  const [historyExpanded, setHistoryExpanded] = useState(true);
   const [period, setPeriod] = useState("day");
-  const isAdmin = role === "admin";
 
+  const [clientTimezone, setClientTimezone] = useState(null);
   const departmentOptions = useDepartmentOptions(api);
   const clientOptions = useClientOptions(api);
 
@@ -1549,13 +2330,14 @@ function DashboardView({ api, wsConnected, liveEvents, role, session }) {
     try {
       setError("");
       const qs = buildQs();
+      const recentSuffix = qs ? `${qs}&limit=100` : `?limit=100`;
       const trendSuffix = qs ? `${qs}&period=${period}` : `?period=${period}`;
       const [s, r, rt, ht, ss] = await Promise.all([
         api(`/dashboard/summary${qs}`),
-        api(`/dashboard/recent-runs${qs}`),
+        api(`/dashboard/recent-runs${recentSuffix}`),
         api(`/dashboard/run-trend${trendSuffix}`),
         api(`/dashboard/hours-saved-trend${trendSuffix}`),
-        api(`/dashboard/status-summary${qs}`),
+        api(`/dashboard/status-summary${trendSuffix}`),
       ]);
       setSummary(s);
       setRecent(r || []);
@@ -1569,6 +2351,8 @@ function DashboardView({ api, wsConnected, liveEvents, role, session }) {
 
   useEffect(() => { load(); }, [load]);
   useEffect(() => { if (liveEvents.length) load(); }, [liveEvents.length]); // eslint-disable-line react-hooks/exhaustive-deps
+
+
 
   const todayStr = getTodayStr();
   const yesterdayStr = getYesterdayStr();
@@ -1590,53 +2374,157 @@ function DashboardView({ api, wsConnected, liveEvents, role, session }) {
   const overallHoursAvailable = !!(summary && overallHoursFields.some((k) => summary[k] != null));
   const overallHours = overallHoursAvailable ? pickField(summary, overallHoursFields, 0) : null;
 
-  const runTrendForChart = useMemo(() => (runTrendRaw || []).map((d) => ({ date: period === "month" ? d.run_date?.slice(0, 7) : d.run_date?.slice(5), runs: d.total_runs })), [runTrendRaw, period]);
-  const hoursTrendForChart = useMemo(() => (hoursTrendRaw || []).map((d) => ({ date: period === "month" ? d.run_date?.slice(0, 7) : d.run_date?.slice(5), hours: d.hours_saved })), [hoursTrendRaw, period]);
-  const RECENT_HISTORY_DAYS = 5;
-const recentWithinWindow = useMemo(
-  () => recent.filter((r) => isWithinLastDays(r.start_time, RECENT_HISTORY_DAYS)),
-  [recent]
-);
-const filteredRecent = recentStatusFilter === "all"
-  ? recentWithinWindow
-  : recentWithinWindow.filter((r) => r.status === recentStatusFilter);
+  const runTrendForChart = useMemo(() =>
+    (runTrendRaw || []).map((d) => ({
+      date: (period === "month" || period === "all") ? d.run_date?.slice(0, 7) : d.run_date?.slice(5),
+      runs: d.total_runs
+    })),
+    [runTrendRaw, period]);
+
+  const hoursTrendForChart = useMemo(() =>
+    (hoursTrendRaw || []).map((d) => ({
+      date: (period === "month" || period === "all") ? d.run_date?.slice(0, 7) : d.run_date?.slice(5),
+      hours: d.hours_saved
+    })),
+    [hoursTrendRaw, period]);
+  const todayLocalDate = useMemo(() => getTodayStr(), []);
+  const yesterdayLocalDate = useMemo(() => getYesterdayStr(), []);
+
+  const dateCounts = useMemo(() => {
+    let today = 0;
+    let yesterday = 0;
+    for (const r of recent || []) {
+      const d = getLocalDateStr(r.start_time);
+      if (d === todayLocalDate) today++;
+      if (d === yesterdayLocalDate) yesterday++;
+    }
+    return { today, yesterday };
+  }, [recent, todayLocalDate, yesterdayLocalDate]);
+
+  const runsForSelectedDate = useMemo(() => {
+    return (recent || [])
+      .filter((r) => {
+        if (!r.start_time) return false;
+        const d = getLocalDateStr(r.start_time);
+        if (recentDateFilter === "today") return d === todayLocalDate;
+        if (recentDateFilter === "yesterday") return d === yesterdayLocalDate;
+        if (recentDateFilter === "custom") return customRunDate ? d === customRunDate : true;
+        return isWithinLastDays(r.start_time, 5);
+      })
+      .sort((a, b) => new Date(b.start_time || 0) - new Date(a.start_time || 0));
+  }, [recent, recentDateFilter, customRunDate, todayLocalDate, yesterdayLocalDate]);
+
+  const statusCountsForActiveDate = useMemo(() => {
+    let all = runsForSelectedDate.length;
+    let started = 0;
+    let success = 0;
+    let failed = 0;
+    for (const r of runsForSelectedDate) {
+      if (r.status === "Started") started++;
+      else if (r.status === "Success") success++;
+      else if (r.status === "Failed") failed++;
+    }
+    return { all, Started: started, Success: success, Failed: failed };
+  }, [runsForSelectedDate]);
+
+  const filteredRecent = useMemo(() => {
+    if (recentStatusFilter === "all") return runsForSelectedDate;
+    return runsForSelectedDate.filter((r) => r.status === recentStatusFilter);
+  }, [runsForSelectedDate, recentStatusFilter]);
+
+  const activeDateLabel = useMemo(() => {
+    if (recentDateFilter === "today") return "Today";
+    if (recentDateFilter === "yesterday") return "Yesterday";
+    if (recentDateFilter === "custom" && customRunDate) {
+      try {
+        const [y, m, d] = customRunDate.split("-").map(Number);
+        return new Date(y, m - 1, d).toLocaleDateString(undefined, { month: "short", day: "numeric", year: "numeric" });
+      } catch (_) {
+        return customRunDate;
+      }
+    }
+    return "Last 5 days";
+  }, [recentDateFilter, customRunDate]);
 
   const clientName = isAdmin ? "Operations fleet" : (session?.clientName || session?.client_name || session?.email?.split("@")[0] || "Your workspace");
 
   const totalTrendRuns = runTrendForChart.reduce((sum, row) => sum + Number(row.runs || 0), 0);
   const totalTrendHours = hoursTrendForChart.reduce((sum, row) => sum + Number(row.hours || 0), 0);
+  const periodStatusTotal = Number(statusSummary?.success || 0) + Number(statusSummary?.failed || 0) + Number(statusSummary?.started || 0);
+  const periodSuccessRate = periodStatusTotal > 0 ? Math.round((Number(statusSummary?.success || 0) / periodStatusTotal) * 100) : null;
+
+  const [topBots, setTopBots] = useState([]);
+  const [topClients, setTopClients] = useState([]);
+
+  useEffect(() => {
+    (async () => {
+      try {
+        const qs = buildQs();
+        const sep = qs ? "&" : "?";
+        // period state-aiye ingayum use panrom
+        const calls = [api(`/dashboard/top-bots${qs}${sep}period=${period}&limit=200`)];
+        if (isAdmin) calls.push(api(`/dashboard/top-clients${qs}${sep}period=${period}&limit=200`));
+        const results = await Promise.all(calls);
+        setTopBots(results[0] || []);
+        if (isAdmin) {
+          setTopClients(results[1] || []);
+        }
+      } catch (_) { /* non-critical */ }
+    })();
+  }, [api, buildQs, period, isAdmin]); // <-- dependency-la 'period' irukanum
 
   return (
     <div className="hb-dashboard-v3">
       <ErrorBanner message={error} onDismiss={() => setError("")} />
-        <ExecutionPulseBar events={liveEvents} connected={wsConnected} />
+      <ExecutionPulseBar events={liveEvents} connected={wsConnected} />
 
       <section className="hb-dashboard-intro">
-        <div>
-          <div className="hb-eyebrow">{isAdmin ? "Robots " : "Client operations"}</div>
-          <h1 className="hb-v3-title">{isAdmin ? " Performance Dashboard" : `${clientName} Robots Performance`}</h1>
-          <p className="hb-v3-subtitle">Real-time visibility into today's executions, automation value and operational health.</p>
-        </div>
-        <div className="hb-v3-controls">
-          <div className="hb-connection-pill">
-            <span className={`hb-connection-dot ${wsConnected ? "live" : "offline"}`} />
-            {wsConnected ? "Live" : "Offline"}
+        <div className="hb-dashboard-intro-copy">
+          <div>
+            <div className="hb-eyebrow">{isAdmin ? "Robots " : "Client operations"}</div>
+            <h1 className="hb-v3-title">{isAdmin ? " Performance Dashboard" : `${clientName} Robots Performance`}</h1>
+            <p className="hb-v3-subtitle">Real-time visibility into today's executions, automation value and operational health.</p>
           </div>
-          <div className="hb-filter-bar"><span className="hb-filter-label">Scope</span><FilterPopover groups={filterGroups} /></div>
-          <ActiveFilterChips groups={filterGroups} />
+
+        </div>
+        <div className="hb-dashboard-intro-right">
+          <FleetOverviewCard summary={summary} isAdmin={isAdmin} />
+          {isAdmin && (
+            <OverallRunsCard
+              totalRuns={summary?.total_runs}
+              successfulRuns={summary?.successful_runs}
+            />
+          )}
+
+          <div className="hb-v3-controls">
+            <div className="hb-connection-pill">
+              <span className={`hb-connection-dot ${wsConnected ? "live" : "offline"}`} />
+              {wsConnected ? "Live" : "Offline"}
+            </div>
+            <div className="hb-filter-bar"><span className="hb-filter-label">Scope</span><FilterPopover groups={filterGroups} /></div>
+            <ActiveFilterChips groups={filterGroups} />
+          </div>
         </div>
       </section>
 
-       {isAdmin && <ClientActivityStrip api={api} />}
+      {isAdmin && <ClientActivityStrip api={api} />}
 
       <section className="hb-today-section">
         <div className="hb-section-rule"><div className="hb-eyebrow">Today's run summary</div><span className="hb-section-date">{new Date().toLocaleDateString(undefined, { weekday: "short", month: "short", day: "numeric" })}</span></div>
         <div className="hb-today-grid">
           <DashboardMetric icon={Activity} label="Total runs" value={todayRuns} tone="accent" note={runsPctChange != null ? `${runsPctChange >= 0 ? "+" : ""}${runsPctChange}% vs yesterday` : "Today's execution volume"} />
-           <DashboardMetric icon={Clock} label="Running now" value={summary?.running_bots ?? "—"} tone="warning" note="Active executions" pulse={Number(summary?.running_bots || 0) > 0} />
+          <DashboardMetric icon={Clock} label="Running now" value={summary?.running_bots ?? "—"} tone="warning" note="Active executions" pulse={Number(summary?.running_bots || 0) > 0} />
           <DashboardMetric icon={CheckCircle2} label="Success" value={todaySuccess} tone="success" note="Completed successfully" />
           <DashboardMetric icon={XCircle} label="Failed" value={todayFailed} tone="danger" note="Requires attention" pulse={todayFailed > 0} />
-         
+          <div className="hb-today-hours-card">
+            <div className="hb-today-hours-icon"><Clock size={14} /></div>
+            <div className="hb-today-hours-copy">
+              <span>Saved today</span>
+              <strong>{todayHours != null ? `${Number(todayHours).toFixed(1)}h` : "—"}</strong>
+              <small>{todayHours != null ? `${formatSavedMinutes(todayHours)} saved` : "Automation value"}</small>
+            </div>
+            <div className="hb-today-hours-ring" style={{ "--hours-pct": `${Math.min(100, Math.round((Number(todayHours || 0) / 4) * 100))}%` }} />
+          </div>
         </div>
       </section>
 
@@ -1644,14 +2532,27 @@ const filteredRecent = recentStatusFilter === "all"
 
       <section className="hb-analytics-zone">
         <div className="hb-section-rule"><div className="hb-eyebrow">Performance analytics</div><div className="hb-period-toggle">
-          {[['day','Daily'],['week','Weekly'],['month','Monthly']].map(([key, label]) => <button key={key} className={period === key ? "active" : ""} onClick={() => setPeriod(key)}>{label}</button>)}
+          {[
+            ['day', 'Daily'],
+            ['week', 'Weekly'],
+            ['month', 'Monthly'],
+            ['all', 'All-Time']
+          ].map(([key, label]) => (
+            <button
+              key={key}
+              className={period === key ? "active" : ""}
+              onClick={() => setPeriod(key)}
+            >
+              {label}
+            </button>
+          ))}
         </div></div>
         <div className="hb-analytics-grid">
           <DashboardChartPanel title="Runs over time" subtitle={`${totalTrendRuns.toLocaleString()} runs in selected period`} accent="blue">
             {runTrendForChart.length === 0 ? <EmptyChartState /> : (
               <ResponsiveContainer width="100%" height="100%">
                 <AreaChart data={runTrendForChart} margin={{ top: 8, right: 8, left: -18, bottom: 0 }}>
-                  <defs><linearGradient id="hbRunsV3" x1="0" y1="0" x2="0" y2="1"><stop offset="0%" stopColor="var(--accent-2)" stopOpacity=".38"/><stop offset="100%" stopColor="var(--accent-2)" stopOpacity="0"/></linearGradient></defs>
+                  <defs><linearGradient id="hbRunsV3" x1="0" y1="0" x2="0" y2="1"><stop offset="0%" stopColor="var(--accent-2)" stopOpacity=".38" /><stop offset="100%" stopColor="var(--accent-2)" stopOpacity="0" /></linearGradient></defs>
                   <CartesianGrid stroke="var(--border)" vertical={false} />
                   <XAxis dataKey="date" stroke="var(--text-dim)" fontSize={10.5} tickLine={false} axisLine={false} />
                   <YAxis stroke="var(--text-dim)" fontSize={10.5} tickLine={false} axisLine={false} allowDecimals={false} />
@@ -1662,18 +2563,24 @@ const filteredRecent = recentStatusFilter === "all"
             )}
           </DashboardChartPanel>
 
-          <DashboardChartPanel title="Hours saved over time" subtitle={`${totalTrendHours.toFixed(1)} hours in selected period`} accent="green">
+          <DashboardChartPanel title="Hours saved" subtitle={`${totalTrendHours.toFixed(1)} hours (${formatSavedMinutes(totalTrendHours)}) in selected period`} accent="green">
             {hoursTrendForChart.length === 0 ? <EmptyChartState /> : (
-              <ResponsiveContainer width="100%" height="100%">
-                <BarChart data={hoursTrendForChart} margin={{ top: 8, right: 8, left: -18, bottom: 0 }}>
-                  <defs><linearGradient id="hbHoursV3" x1="0" y1="0" x2="0" y2="1"><stop offset="0%" stopColor="var(--accent)" stopOpacity=".95"/><stop offset="100%" stopColor="var(--accent)" stopOpacity=".2"/></linearGradient></defs>
-                  <CartesianGrid stroke="var(--border)" vertical={false} />
-                  <XAxis dataKey="date" stroke="var(--text-dim)" fontSize={10.5} tickLine={false} axisLine={false} />
-                  <YAxis stroke="var(--text-dim)" fontSize={10.5} tickLine={false} axisLine={false} />
-                  <Tooltip content={<ChartTooltip />} />
-                  <Bar dataKey="hours" name="Hours saved" fill="url(#hbHoursV3)" radius={[5,5,0,0]} isAnimationActive animationDuration={700} />
-                </BarChart>
-              </ResponsiveContainer>
+              <div className="hb-hours-saved-layout">
+                <div className="hb-hours-saved-chart">
+                  <ResponsiveContainer width="100%" height="100%">
+                    <BarChart data={hoursTrendForChart} margin={{ top: 8, right: 4, left: -18, bottom: 0 }}>
+                      <CartesianGrid stroke="var(--border)" vertical={false} />
+                      <XAxis dataKey="date" stroke="var(--text-dim)" fontSize={9.5} tickLine={false} axisLine={false} />
+                      <YAxis stroke="var(--text-dim)" fontSize={9.5} tickLine={false} axisLine={false} />
+                      <Tooltip content={<ChartTooltip />} />
+                      <Bar dataKey="hours" name="Hours saved" fill="#f59e0b" radius={[4, 4, 0, 0]} />
+                    </BarChart>
+                  </ResponsiveContainer>
+                </div>
+                <div className="hb-hours-saved-ring-wrap">
+                  <HoursSavedRing totalHours={totalTrendHours} dayCount={hoursTrendForChart.length} />
+                </div>
+              </div>
             )}
           </DashboardChartPanel>
 
@@ -1681,53 +2588,136 @@ const filteredRecent = recentStatusFilter === "all"
         </div>
       </section>
 
-            <section className="hb-overall-zone">
-        <div className="hb-section-rule"><div className="hb-eyebrow">Overall performance</div><span className="hb-section-hint">Lifetime execution record</span></div>
-        <div className="hb-overall-card">
-          <div className="hb-overall-main"><span className="hb-overall-orbit" /><div className="hb-eyebrow">Total executions</div><div className="hb-overall-number">{summary?.total_runs ?? "—"}</div><div className="hb-overall-caption">All recorded runs in the selected scope</div></div>
-          <div className="hb-overall-stat success"><span>Success</span><strong>{summary?.successful_runs ?? "—"}</strong></div>
-          <div className="hb-overall-stat danger"><span>Failures</span><strong>{summary?.failed_runs ?? "—"}</strong></div>
-          <div className="hb-overall-stat accent"><span>Running</span><strong>{summary?.running_bots ?? "—"}</strong></div>
-        </div>
+      <section className="hb-ranking-grid" style={{ marginTop: 24 }}>
+        <RankingChart title="Top bots" icon={Bot} rows={topBots} nameKey="bot_name" subKey={isAdmin ? "client_name" : undefined} loading={false} />
+        {isAdmin ? (
+          <RankingChart title="Top clients" icon={Users} rows={topClients} nameKey="client_name" loading={false} />
+        ) : (
+          <ClientPerformanceCard totalRuns={totalTrendRuns} successRate={periodSuccessRate} hoursSaved={totalTrendHours} />
+        )}
       </section>
-
-      <section className="hb-value-zone">
-        <div className="hb-section-rule"><div className="hb-eyebrow">Automation value</div></div>
-        <div className="hb-value-grid">
-          <DashboardValueCard icon={TrendingUp} label="Hours saved today" value={todayHours != null ? `${Number(todayHours).toFixed(2)} hrs` : "—"} caption={yesterdayHours != null ? `${(Number(todayHours || 0) - Number(yesterdayHours)).toFixed(2)} hrs vs yesterday` : "Today's realized automation value"} tone="accent" />
-          <DashboardValueCard icon={Clock} label="Overall hours saved" value={overallHoursAvailable ? `${Number(overallHours || 0).toLocaleString(undefined, { maximumFractionDigits: 2 })} hrs` : "—"} caption="Lifetime automation value" tone="success" />
-          <DashboardValueCard icon={Bot} label="Active robots" value={summary?.total_bots ?? "—"} caption="Robots available in this scope" tone="accent" />
-          <DashboardValueCard icon={Users} label={isAdmin ? "Active clients" : "Workspace"} value={isAdmin ? (summary?.total_clients ?? "—") : clientName} caption={isAdmin ? "Clients in the selected scope" : "Current client workspace"} tone="accent" />
-        </div>
-      </section>
-
-
 
       <section className="hb-runs-zone">
         <div className="hb-section-rule"><div className="hb-eyebrow">Recent runs</div><span className="hb-section-hint">Latest automation executions</span></div>
         <div className="hb-runs-panel">
           <div className="hb-runs-head">
-            <div><div className="hb-panel-title">Execution history</div><div className="hb-section-subtitle">Filter the stream without leaving the dashboard.</div></div>
-            <StatusFilterTabs value={recentStatusFilter} onChange={setRecentStatusFilter} />
+            <button type="button" className="hb-history-toggle" onClick={() => setHistoryExpanded((v) => !v)} aria-expanded={historyExpanded}>
+              <span className="hb-history-chevron"><ChevronDown size={16} /></span>
+              <span>
+                <span className="hb-panel-title">Execution history ({activeDateLabel})</span>
+                <span className="hb-section-subtitle">
+                  {historyExpanded
+                    ? `${runsForSelectedDate.length} bot execution${runsForSelectedDate.length === 1 ? "" : "s"} ${recentDateFilter === "today" ? "today" : recentDateFilter === "yesterday" ? "yesterday" : `on ${activeDateLabel}`}. Click row to inspect logs.`
+                    : "Click to expand automation executions."}
+                </span>
+              </span>
+            </button>
+
+            <div className="hb-runs-controls">
+              <RunDateFilterTabs
+                value={recentDateFilter}
+                onChange={setRecentDateFilter}
+                customDate={customRunDate}
+                onCustomDateChange={setCustomRunDate}
+                counts={dateCounts}
+              />
+              <StatusFilterTabs
+                value={recentStatusFilter}
+                onChange={setRecentStatusFilter}
+                counts={statusCountsForActiveDate}
+              />
+            </div>
           </div>
-          <div className="hb-runs-table-head"><span>Bot</span><span>Client</span><span>Status</span><span>Started</span></div>
-          <div className="hb-scroll hb-runs-list">
-            {filteredRecent.length === 0 && (
-  <div className="hb-empty-runs">
-    {recentWithinWindow.length === 0 ? `No runs in the last ${RECENT_HISTORY_DAYS} days.` : "No runs match this filter."}
-  </div>
-)}
-            {filteredRecent.map((r, i) => (
-              <div key={r.run_id} className={`hb-run-row ${i === 0 && liveEvents.length ? "fresh" : ""}`}>
-                <div className="hb-run-bot"><StatusDot status={r.status} /><div><strong>{r.bot_name}</strong><small>{r.execution_id || `Run #${r.run_id}`}</small></div></div>
-                <div className="hb-run-client">{r.client_name || "—"}</div>
-                <div><Badge tone={r.status === "Success" ? "success" : r.status === "Failed" ? "danger" : r.status === "Started" ? "warning" : "muted"}>{r.status === "Started" ? "Running" : r.status}</Badge></div>
-                <div className="hb-run-time">{timeAgo(r.start_time)}</div>
+          {historyExpanded && (
+            <>
+              <div className="hb-runs-table-head">
+                <span>Bot & ID</span>
+                <span>Client</span>
+                <span>Status</span>
+                <span>Duration</span>
+                <span>Started</span>
+                {/* <span style={{ textAlign: "right" }}>Logs</span> */}
               </div>
-            ))}
-          </div>
+              <div className="hb-scroll hb-runs-list">
+                {filteredRecent.length === 0 && (
+                  <div className="hb-empty-runs">
+                    {runsForSelectedDate.length === 0
+                      ? `No bots executed ${recentDateFilter === "today" ? "today" : recentDateFilter === "yesterday" ? "yesterday" : `on ${activeDateLabel}`}.`
+                      : "No runs match the selected status filter."}
+                  </div>
+                )}
+                {filteredRecent.map((r, i) => (
+                  <div
+                    key={r.run_id}
+                    className={`hb-run-row ${i === 0 && liveEvents.length ? "fresh" : ""}`}
+                    onClick={() => setSelectedRunLog(r)}
+                    role="button"
+                    tabIndex={0}
+                    onKeyDown={(e) => { if (e.key === "Enter" || e.key === " ") setSelectedRunLog(r); }}
+                    style={{ cursor: "pointer" }}
+                    title="Click to view run details and logs"
+                  >
+                    <div className="hb-run-bot">
+                      <StatusDot status={r.status} />
+                      <div>
+                        <strong>{r.bot_name}</strong>
+                        <div className="hb-run-sub">
+                          <small>{r.execution_id || `Run #${r.run_id}`}</small>
+                          {r.status === "Failed" && r.failure_stage && (
+                            <span className="hb-stage-pill" title={`Failed stage: ${r.failure_stage}`}>
+                              Stage: {r.failure_stage}
+                            </span>
+                          )}
+                        </div>
+                      </div>
+                    </div>
+                    <div className="hb-run-client">{r.client_name || "—"}</div>
+                    <div>
+                      <Badge tone={r.status === "Success" ? "success" : r.status === "Failed" ? "danger" : r.status === "Started" ? "warning" : "muted"}>
+                        {r.status === "Started" ? "Running" : r.status}
+                      </Badge>
+                    </div>
+                    <div className="hb-run-duration">
+                      {r.status === "Started" ? (
+                        <span className="hb-running-pulse">In progress…</span>
+                      ) : (
+                        fmtDuration(r.duration_seconds)
+                      )}
+                    </div>
+                    <div className="hb-run-time">
+                      <strong>{formatRunTime(r.start_time)}</strong>
+                      <small>{timeAgo(r.start_time)}</small>
+                    </div>
+                    {/* <div className="hb-run-action" style={{ textAlign: "right" }}>
+                      <button
+                        type="button"
+                        className="hb-run-log-btn"
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          setSelectedRunLog(r);
+                        }}
+                        title="View log files"
+                      >
+                        <FileText size={13} />
+                        <span>Logs</span>
+                      </button>
+                    </div> */}
+                  </div>
+                ))}
+              </div>
+            </>
+          )}
         </div>
       </section>
+
+      {selectedRunLog && (
+        <RunLogsModal
+          api={api}
+          bot={{ bot_name: selectedRunLog.bot_name, bot_id: selectedRunLog.bot_id }}
+          run={selectedRunLog}
+          onClose={() => setSelectedRunLog(null)}
+        />
+      )}
 
       <footer className="hb-dashboard-footer">
         <div></div>
@@ -1736,67 +2726,430 @@ const filteredRecent = recentStatusFilter === "all"
     </div>
   );
 }
+function RunLogsModal({ api, bot, run, onClose }) {
+  const [attachments, setAttachments] = useState([]);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState("");
+  const [selectedAttachment, setSelectedAttachment] = useState(null);
 
-function HoursSavedSection({ todayHours, yesterdayHours, overallHours, overallAvailable }) {
-  const hasToday = typeof todayHours === "number" && !isNaN(todayHours);
-  const animatedToday = useCountUpFloat(hasToday ? todayHours : NaN, 2, 800);
-  const diff = (hasToday && typeof yesterdayHours === "number") ? (todayHours - yesterdayHours) : null;
+  useEffect(() => {
+    let cancelled = false;
+
+    (async () => {
+      setLoading(true);
+      setError("");
+      try {
+        const res = await api(`/dashboard/bot-runs/${run.run_id}/logs`);
+        if (!cancelled) setAttachments(res || []);
+      } catch (err) {
+        if (!cancelled) setError(err.message);
+      } finally {
+        if (!cancelled) setLoading(false);
+      }
+    })();
+
+    return () => { cancelled = true; };
+  }, [api, run.run_id]);
+
+  const formatBytes = (bytes) => {
+    if (!bytes) return "0 KB";
+    if (bytes < 1024) return `${bytes} B`;
+    if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`;
+    return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
+  };
+
+  if (selectedAttachment) {
+    return (
+      <RunLogViewer
+        api={api}
+        bot={bot}
+        run={run}
+        attachment={selectedAttachment}
+        onClose={() => setSelectedAttachment(null)}
+      />
+    );
+  }
 
   return (
-    <div style={{ display: "flex", gap: 14, flexWrap: "wrap", marginBottom: 18, alignItems: "stretch" }}>
-      <div
-        style={{
-          flex: "2 1 280px", minWidth: 240, background: "var(--surface)", border: "1px solid var(--border)",
-          borderRadius: 18, padding: "22px 24px", position: "relative", overflow: "hidden",
-          animation: "hb-rise .5s ease both",
-          transition: "transform .2s ease, border-color .2s ease, box-shadow .2s ease",
-        }}
-        onMouseEnter={(e) => { e.currentTarget.style.transform = "translateY(-3px)"; e.currentTarget.style.borderColor = "var(--border-hover)"; e.currentTarget.style.boxShadow = "0 12px 28px rgba(0,0,0,0.25)"; }}
-        onMouseLeave={(e) => { e.currentTarget.style.transform = "translateY(0)"; e.currentTarget.style.borderColor = "var(--border)"; e.currentTarget.style.boxShadow = "none"; }}
-      >
-        <div style={{ position: "absolute", top: -36, right: -36, width: 120, height: 120, borderRadius: "50%", background: "var(--accent)", opacity: 0.07 }} />
-        <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 16, position: "relative" }}>
-          <div style={{ width: 36, height: 36, borderRadius: 10, display: "flex", alignItems: "center", justifyContent: "center", background: "var(--accent-dim)", color: "var(--accent)", flexShrink: 0 }}>
-            <TrendingUp size={18} />
+    <Modal title={`${bot?.bot_name || run?.bot_name || "Bot"} — run logs`} onClose={onClose} width={700}>
+      <ErrorBanner message={error} onDismiss={() => setError("")} />
+
+      <div style={{
+        display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(130px, 1fr))",
+        gap: 10, marginBottom: 14, padding: "12px 14px",
+        border: "1px solid var(--border)", borderRadius: 10,
+        background: "var(--surface-2)",
+      }}>
+        <div>
+          <div style={{ color: "var(--text-dim)", fontSize: 10.5, textTransform: "uppercase", letterSpacing: 0.5 }}>Bot & Run</div>
+          <div style={{ fontWeight: 650, fontSize: 13, marginTop: 2 }}>{bot?.bot_name || run?.bot_name}</div>
+          <div style={{ color: "var(--text-dim)", fontSize: 11 }}>{run?.execution_id || `Run #${run?.run_id}`}</div>
+        </div>
+
+        <div>
+          <div style={{ color: "var(--text-dim)", fontSize: 10.5, textTransform: "uppercase", letterSpacing: 0.5 }}>Client</div>
+          <div style={{ fontWeight: 600, fontSize: 12.5, marginTop: 2 }}>{run?.client_name || "—"}</div>
+        </div>
+
+        <div>
+          <div style={{ color: "var(--text-dim)", fontSize: 10.5, textTransform: "uppercase", letterSpacing: 0.5 }}>Status</div>
+          <div style={{ marginTop: 2 }}>
+            <Badge tone={run?.status === "Success" ? "success" : run?.status === "Failed" ? "danger" : run?.status === "Started" ? "warning" : "muted"}>
+              {run?.status === "Started" ? "Running" : run?.status}
+            </Badge>
           </div>
-          <div className="hb-eyebrow">Hours saved today</div>
         </div>
-        <div style={{ fontFamily: "var(--font-mono)", fontSize: 36, fontWeight: 700, color: "var(--accent)", lineHeight: 1, position: "relative" }}>
-          {hasToday ? `${animatedToday} hrs` : "—"}
+
+        <div>
+          <div style={{ color: "var(--text-dim)", fontSize: 10.5, textTransform: "uppercase", letterSpacing: 0.5 }}>Duration</div>
+          <div style={{ fontWeight: 600, fontSize: 12.5, marginTop: 2, fontFamily: "var(--font-mono)" }}>
+            {run?.status === "Started" ? "In progress…" : fmtDuration(run?.duration_seconds)}
+          </div>
         </div>
-        {diff != null && (
-          <div style={{ fontSize: 11.5, color: diff >= 0 ? "var(--success)" : "var(--danger)", marginTop: 8, position: "relative" }}>
-            {diff >= 0 ? "+" : ""}{diff.toFixed(2)} hrs vs yesterday
+
+        <div>
+          <div style={{ color: "var(--text-dim)", fontSize: 10.5, textTransform: "uppercase", letterSpacing: 0.5 }}>Started At</div>
+          <div style={{ fontWeight: 500, fontSize: 12, marginTop: 2 }}>
+            {run?.start_time ? new Date(run.start_time).toLocaleTimeString(undefined, { hour: "2-digit", minute: "2-digit" }) : "—"}
+          </div>
+          <div style={{ color: "var(--text-dim)", fontSize: 10.5 }}>
+            {run?.start_time ? new Date(run.start_time).toLocaleDateString(undefined, { month: "short", day: "numeric" }) : ""}
+          </div>
+        </div>
+
+        {run?.status === "Failed" && run?.failure_stage && (
+          <div style={{ gridColumn: "1 / -1", borderTop: "1px solid var(--border)", paddingTop: 8, marginTop: 2 }}>
+            <span style={{ color: "var(--danger)", fontSize: 12, fontWeight: 600 }}>
+              Failure Stage:
+            </span>{" "}
+            <span style={{ color: "var(--text)", fontSize: 12 }}>{run.failure_stage}</span>
           </div>
         )}
       </div>
 
-      <div style={{
-        flex: "1 1 200px", minWidth: 180, background: "var(--surface-2)", border: "1px solid var(--border)",
-        borderRadius: 12, padding: "16px 18px", display: "flex", flexDirection: "column", justifyContent: "center",
-        animation: "hb-rise .45s ease .06s both", transition: "border-color .18s ease",
-      }}
-      onMouseEnter={(e) => { e.currentTarget.style.borderColor = "var(--border-hover)"; }}
-      onMouseLeave={(e) => { e.currentTarget.style.borderColor = "var(--border)"; }}
-      >
-        <div className="hb-eyebrow" style={{ marginBottom: 8 }}>Overall hours saved</div>
-        <div style={{ fontFamily: "var(--font-mono)", fontSize: 22, fontWeight: 600, color: "var(--text)" }}>
-          {overallAvailable ? `${Number(overallHours ?? 0).toLocaleString(undefined, { maximumFractionDigits: 2 })} hrs` : "—"}
+      {loading ? (
+        <div style={{ padding: 34, textAlign: "center", color: "var(--text-dim)" }}>
+          Loading logs…
         </div>
-        {!overallAvailable && (
-          <div style={{ fontSize: 10.5, color: "var(--text-dim)", marginTop: 6 }}>
-            Backend doesn't expose a lifetime hours-saved total yet.
-          </div>
-        )}
-      </div>
-    </div>
+      ) : attachments.length === 0 ? (
+        <div style={{ padding: 38, textAlign: "center", color: "var(--text-dim)" }}>
+          <FileText size={28} style={{ opacity: .45, marginBottom: 8 }} />
+          <div>No log files attached to this run.</div>
+        </div>
+      ) : (
+        <div style={{ border: "1px solid var(--border)", borderRadius: 11, overflow: "hidden" }}>
+          {attachments.map((file, index) => (
+            <div key={file.attachment_id} style={{
+              display: "flex", alignItems: "center", justifyContent: "space-between",
+              gap: 12, padding: "12px 14px",
+              borderBottom: index === attachments.length - 1 ? "none" : "1px solid var(--border)",
+            }}>
+              <div style={{ display: "flex", alignItems: "center", gap: 10, minWidth: 0 }}>
+                <div style={{
+                  width: 34, height: 34, borderRadius: 9, display: "grid", placeItems: "center",
+                  background: "var(--accent-dim)", color: "var(--accent)", flexShrink: 0,
+                }}>
+                  <FileText size={16} />
+                </div>
+                <div style={{ minWidth: 0 }}>
+                  <div style={{ fontSize: 12.5, fontWeight: 600, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+                    {file.filename}
+                  </div>
+                  <div style={{ marginTop: 3, color: "var(--text-dim)", fontSize: 10.5, fontFamily: "var(--font-mono)" }}>
+                    {formatBytes(file.size_bytes)}
+                  </div>
+                </div>
+              </div>
+              <Button variant="ghost" onClick={() => setSelectedAttachment(file)}>
+                <ExternalLink size={13} /> Open log
+              </Button>
+            </div>
+          ))}
+        </div>
+      )}
+    </Modal>
   );
 }
 
-function BotRunHistoryModal({ api, bot, onClose }) {
+
+function LogsView({ api, context = null, onBackToReports }) {
+  const [rows, setRows] = useState([]);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState("");
+  const [search, setSearch] = useState("");
+  const [status, setStatus] = useState("");
+  const [period, setPeriod] = useState("day");
+  const [selectedRun, setSelectedRun] = useState(null);
+  const [selectedBot, setSelectedBot] = useState(null);
+
+  const isSingleRunContext = !!context?.run_id;
+
+  const loadLogs = useCallback(async () => {
+    setLoading(true);
+    setError("");
+    try {
+      let res;
+      if (context?.run_id) {
+        // When coming from Bot Reports, load only that exact run.
+        const attachments = await api(`/dashboard/bot-runs/${context.run_id}/logs`);
+        res = (attachments || []).map((file) => ({
+          ...file,
+          run_id: context.run_id,
+          bot_id: context.bot_id ?? file.bot_id,
+          bot_name: context.bot_name ?? file.bot_name,
+          client_name: context.client_name ?? file.client_name,
+          status: context.status ?? file.status,
+          start_time: context.start_time ?? file.start_time,
+        }));
+      } else {
+        // Direct sidebar navigation shows all available bot logs.
+        res = await api("/dashboard/logs?limit=500");
+      }
+      setRows(Array.isArray(res) ? res : []);
+    } catch (err) {
+      setError(err.message || "Failed to load bot logs.");
+      setRows([]);
+    } finally {
+      setLoading(false);
+    }
+  }, [api, context?.run_id, context?.bot_id, context?.bot_name, context?.client_name, context?.status, context?.start_time]);
+
+  useEffect(() => {
+    loadLogs();
+  }, [loadLogs]);
+
+  const filtered = useMemo(() => {
+    const q = search.trim().toLowerCase();
+    return rows.filter((row) => {
+      const matchesStatus = !status || row.status === status;
+      // Single-run context is already scoped to one run — period doesn't apply there.
+      const matchesPeriod = isSingleRunContext || isWithinPeriod(row.start_time, period);
+      const haystack = `${row.bot_name || ""} ${row.client_name || ""} ${row.filename || ""} ${row.run_id || ""}`.toLowerCase();
+      return matchesStatus && matchesPeriod && (!q || haystack.includes(q));
+    });
+  }, [rows, search, status, period, isSingleRunContext]);
+
+  // Single-run context (opened from Bot Reports): one row, that run's files.
+  const groupedByRun = useMemo(() => {
+    const map = new Map();
+    for (const row of filtered) {
+      if (!map.has(row.run_id)) {
+        map.set(row.run_id, {
+          run_id: row.run_id,
+          bot_id: row.bot_id,
+          bot_name: row.bot_name,
+          client_name: row.client_name,
+          status: row.status,
+          start_time: row.start_time,
+          files: [],
+        });
+      }
+      map.get(row.run_id).files.push(row);
+    }
+    return Array.from(map.values());
+  }, [filtered]);
+
+  // General "all logs" list: one row PER BOT, so a bot with 85 failed runs
+  // shows as a single summarized row instead of 85 near-identical lines.
+  const groupedByBot = useMemo(() => {
+    const map = new Map();
+    for (const row of filtered) {
+      const key = row.bot_id ?? row.bot_name;
+      if (!map.has(key)) {
+        map.set(key, {
+          bot_id: row.bot_id,
+          bot_name: row.bot_name,
+          client_name: row.client_name,
+          runIds: new Set(),
+          fileCount: 0,
+          failedCount: 0,
+          successCount: 0,
+          latestStart: row.start_time,
+        });
+      }
+      const g = map.get(key);
+      g.runIds.add(row.run_id);
+      g.fileCount += 1;
+      if (row.status === "Failed") g.failedCount += 1;
+      if (row.status === "Success") g.successCount += 1;
+      if (row.start_time && (!g.latestStart || new Date(row.start_time) > new Date(g.latestStart))) {
+        g.latestStart = row.start_time;
+      }
+    }
+    return Array.from(map.values())
+      .map((g) => ({ ...g, runCount: g.runIds.size }))
+      .sort((a, b) => new Date(b.latestStart || 0) - new Date(a.latestStart || 0));
+  }, [filtered]);
+
+  const displayRows = isSingleRunContext ? groupedByRun : groupedByBot;
+
+  return (
+    <>
+      <div>
+        <ErrorBanner message={error} onDismiss={() => setError("")} />
+
+        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", gap: 16, marginBottom: 18, flexWrap: "wrap" }}>
+          <div>
+            <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
+              {context?.run_id && (
+                <button
+                  type="button"
+                  onClick={onBackToReports}
+                  style={{
+                    display: "inline-flex", alignItems: "center", gap: 5,
+                    background: "var(--surface-2)", border: "1px solid var(--border)",
+                    color: "var(--text-muted)", borderRadius: 8, padding: "6px 9px", fontSize: 12,
+                  }}
+                >
+                  ← Back
+                </button>
+              )}
+              <div style={{ fontFamily: "var(--font-display)", fontSize: 18, fontWeight: 650 }}>Bot Logs</div>
+            </div>
+            <div style={{ color: "var(--text-muted)", fontSize: 13, marginTop: 5 }}>
+              {context?.run_id
+                ? `${context.bot_name || "Bot"} · Run #${context.run_id}${context.status ? ` · ${context.status}` : ""}`
+                : "Execution logs received from bot report emails."}
+            </div>
+          </div>
+          <Badge tone="accent"><FileText size={11} /> {filtered.length} files</Badge>
+        </div>
+
+        <div style={{ display: "flex", flexWrap: "wrap", alignItems: "center", gap: 8, padding: 10, marginBottom: 14, background: "var(--surface)", border: "1px solid var(--border)", borderRadius: 12 }}>
+          <div style={{ position: "relative", flex: "1 1 260px", minWidth: 200 }}>
+            <Search size={14} style={{ position: "absolute", left: 11, top: "50%", transform: "translateY(-50%)", color: "var(--text-dim)", pointerEvents: "none" }} />
+            <input
+              value={search}
+              onChange={(e) => setSearch(e.target.value)}
+              placeholder="Search bot, client, file or run"
+              aria-label="Search bot, client, file or run"
+              style={{
+                width: "100%", boxSizing: "border-box", padding: "9px 12px 9px 34px",
+                background: "var(--surface-2)", color: "var(--text)", border: "1px solid var(--border)",
+                borderRadius: 9, outline: "none", fontSize: 13,
+              }}
+              onFocus={(e) => { e.currentTarget.style.borderColor = "var(--accent)"; }}
+              onBlur={(e) => { e.currentTarget.style.borderColor = "var(--border)"; }}
+            />
+          </div>
+          <select value={status} onChange={(e) => setStatus(e.target.value)} style={{ ...inputStyle, width: "auto", minWidth: 120, padding: "8px 10px" }}>
+            <option value="">All statuses</option>
+            <option value="Success">Success</option>
+            <option value="Failed">Failed</option>
+          </select>
+          {!isSingleRunContext && (
+            <select value={period} onChange={(e) => setPeriod(e.target.value)} style={{ ...inputStyle, width: "auto", minWidth: 120, padding: "8px 10px" }}>
+              {PERIOD_OPTIONS.map((o) => <option key={o.value} value={o.value}>{o.label}</option>)}
+            </select>
+          )}
+          <Button variant="ghost" onClick={loadLogs}><RotateCcw size={13} /> Refresh</Button>
+        </div>
+
+        <div style={{ background: "var(--surface)", border: "1px solid var(--border)", borderRadius: 14, overflow: "hidden" }}>
+          {loading ? (
+            <div style={{ padding: 42, textAlign: "center", color: "var(--text-dim)" }}>Loading logs…</div>
+          ) : displayRows.length === 0 ? (
+            <div style={{ padding: 42, textAlign: "center", color: "var(--text-dim)" }}>No bot logs found.</div>
+          ) : isSingleRunContext ? (
+            <div className="hb-scroll" style={{ overflowX: "auto" }}>
+              <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 13 }}>
+                <thead>
+                  <tr style={{ borderBottom: "1px solid var(--border)" }}>
+                    <th style={{ textAlign: "left", padding: "11px 16px", color: "var(--text-muted)", fontWeight: 500, fontSize: 12 }}>Bot</th>
+                    <th style={{ textAlign: "left", padding: "11px 16px", color: "var(--text-muted)", fontWeight: 500, fontSize: 12 }}>Client</th>
+                    <th style={{ textAlign: "left", padding: "11px 16px", color: "var(--text-muted)", fontWeight: 500, fontSize: 12 }}>Run</th>
+                    <th style={{ textAlign: "left", padding: "11px 16px", color: "var(--text-muted)", fontWeight: 500, fontSize: 12 }}>Status</th>
+                    <th style={{ textAlign: "left", padding: "11px 16px", color: "var(--text-muted)", fontWeight: 500, fontSize: 12 }}>Started</th>
+                    <th style={{ textAlign: "right", padding: "11px 16px", color: "var(--text-muted)", fontWeight: 500, fontSize: 12 }}>Files</th>
+                    <th style={{ textAlign: "right", padding: "11px 16px", color: "var(--text-muted)", fontWeight: 500, fontSize: 12 }}>Action</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {displayRows.map((run) => (
+                    <tr key={run.run_id} className="hb-row-hover" style={{ borderBottom: "1px solid var(--border)" }}>
+                      <td style={{ padding: "12px 16px", fontWeight: 600 }}>{run.bot_name || "—"}</td>
+                      <td style={{ padding: "12px 16px", color: "var(--text-muted)" }}>{run.client_name || "—"}</td>
+                      <td style={{ padding: "12px 16px", fontFamily: "var(--font-mono)", fontSize: 11.5 }}>#{run.run_id}</td>
+                      <td style={{ padding: "12px 16px" }}><Badge tone={run.status === "Success" ? "success" : run.status === "Failed" ? "danger" : "warning"}>{run.status || "—"}</Badge></td>
+                      <td style={{ padding: "12px 16px", color: "var(--text-muted)", fontFamily: "var(--font-mono)", fontSize: 11.5 }}>{run.start_time ? new Date(run.start_time).toLocaleString(undefined, { month: "short", day: "numeric", hour: "2-digit", minute: "2-digit" }) : "—"}</td>
+                      <td style={{ padding: "12px 16px", textAlign: "right", fontFamily: "var(--font-mono)" }}>{run.files.length}</td>
+                      <td style={{ padding: "12px 16px", textAlign: "right" }}>
+                        <Button variant="ghost" onClick={() => setSelectedRun(run)}><FileText size={13} /> View logs</Button>
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          ) : (
+            <div className="hb-scroll" style={{ overflowX: "auto" }}>
+              <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 13 }}>
+                <thead>
+                  <tr style={{ borderBottom: "1px solid var(--border)" }}>
+                    <th style={{ textAlign: "left", padding: "11px 16px", color: "var(--text-muted)", fontWeight: 500, fontSize: 12 }}>Bot</th>
+                    <th style={{ textAlign: "left", padding: "11px 16px", color: "var(--text-muted)", fontWeight: 500, fontSize: 12 }}>Client</th>
+                    <th style={{ textAlign: "right", padding: "11px 16px", color: "var(--text-muted)", fontWeight: 500, fontSize: 12 }}>Runs</th>
+                    <th style={{ textAlign: "right", padding: "11px 16px", color: "var(--success)", fontWeight: 500, fontSize: 12 }}>Success</th>
+                    <th style={{ textAlign: "right", padding: "11px 16px", color: "var(--danger)", fontWeight: 500, fontSize: 12 }}>Failed</th>
+                    <th style={{ textAlign: "left", padding: "11px 16px", color: "var(--text-muted)", fontWeight: 500, fontSize: 12 }}>Latest</th>
+                    <th style={{ textAlign: "right", padding: "11px 16px", color: "var(--text-muted)", fontWeight: 500, fontSize: 12 }}>Action</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {displayRows.map((bot) => (
+                    <tr
+                      key={bot.bot_id ?? bot.bot_name}
+                      className="hb-row-hover"
+                      onClick={() => setSelectedBot(bot)}
+                      style={{ borderBottom: "1px solid var(--border)", cursor: "pointer" }}
+                    >
+                      <td style={{ padding: "12px 16px", fontWeight: 600 }}>{bot.bot_name || "—"}</td>
+                      <td style={{ padding: "12px 16px", color: "var(--text-muted)" }}>{bot.client_name || "—"}</td>
+                      <td style={{ padding: "12px 16px", textAlign: "right", fontFamily: "var(--font-mono)" }}>{bot.runCount}</td>
+                      <td style={{ padding: "12px 16px", textAlign: "right", fontFamily: "var(--font-mono)", color: "var(--success)" }}>{bot.successCount}</td>
+                      <td style={{ padding: "12px 16px", textAlign: "right", fontFamily: "var(--font-mono)", color: bot.failedCount > 0 ? "var(--danger)" : "var(--text-dim)" }}>{bot.failedCount}</td>
+                      <td style={{ padding: "12px 16px", color: "var(--text-muted)", fontFamily: "var(--font-mono)", fontSize: 11.5 }}>{bot.latestStart ? new Date(bot.latestStart).toLocaleString(undefined, { month: "short", day: "numeric", hour: "2-digit", minute: "2-digit" }) : "—"}</td>
+                      <td style={{ padding: "12px 16px", textAlign: "right" }}>
+                        <Button variant="ghost" onClick={(e) => { e.stopPropagation(); setSelectedBot(bot); }}>
+                          <FileText size={13} /> View logs
+                        </Button>
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          )}
+        </div>
+      </div>
+
+      {selectedRun && (
+        <RunLogsModal
+          api={api}
+          bot={{ bot_name: selectedRun.bot_name }}
+          run={selectedRun}
+          onClose={() => setSelectedRun(null)}
+        />
+      )}
+
+      {selectedBot && (
+        <BotRunHistoryModal
+          api={api}
+          bot={{ bot_id: selectedBot.bot_id, bot_name: selectedBot.bot_name, client_name: selectedBot.client_name }}
+          onClose={() => setSelectedBot(null)}
+          onOpenLogs={(ctx) => setSelectedRun(ctx)}
+        />
+      )}
+    </>
+  );
+}
+function BotRunHistoryModal({ api, bot, onClose, onOpenLogs }) {
   const [runs, setRuns] = useState([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
+  const [selectedRun, setSelectedRun] = useState(null);
+
+  const RUN_HISTORY_DAYS = 5;
 
   useEffect(() => {
     (async () => {
@@ -1813,12 +3166,10 @@ function BotRunHistoryModal({ api, bot, onClose }) {
     })();
   }, [api, bot.bot_id]);
 
-  const fmtDuration = (seconds) => {
-    if (seconds == null) return "—";
-    const mins = Math.floor(seconds / 60);
-    const secs = seconds % 60;
-    return mins > 0 ? `${mins}m ${secs}s` : `${secs}s`;
-  };
+  // Filter to the last 5 days and sort newest to oldest
+  const filteredRuns = useMemo(() => {
+    return [...(runs || [])].sort((a, b) => new Date(b.start_time || 0) - new Date(a.start_time || 0));
+  }, [runs]);
 
   const fmtDateTime = (iso) => {
     if (!iso) return "—";
@@ -1828,70 +3179,1092 @@ function BotRunHistoryModal({ api, bot, onClose }) {
   };
 
   return (
-    <Modal title={`${bot.bot_name} — run history`} onClose={onClose} width={620}>
-      <ErrorBanner message={error} onDismiss={() => setError("")} />
-      <div className="hb-scroll" style={{ maxHeight: 440, overflowY: "auto" }}>
-        <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 13 }}>
-          <thead>
-            <tr style={{ borderBottom: "1px solid var(--border)" }}>
-              <th style={{ textAlign: "left", padding: "8px 10px", color: "var(--text-muted)", fontWeight: 500, fontSize: 11.5 }}>Started</th>
-              <th style={{ textAlign: "left", padding: "8px 10px", color: "var(--text-muted)", fontWeight: 500, fontSize: 11.5 }}>Status</th>
-              <th style={{ textAlign: "right", padding: "8px 10px", color: "var(--text-muted)", fontWeight: 500, fontSize: 11.5 }}>Duration</th>
-              <th style={{ textAlign: "right", padding: "8px 10px", color: "var(--text-muted)", fontWeight: 500, fontSize: 11.5 }}>Transactions</th>
-            </tr>
-          </thead>
-          <tbody>
-            {loading && (
-              <tr><td colSpan={4} style={{ padding: 20, textAlign: "center", color: "var(--text-dim)" }}>Loading…</td></tr>
-            )}
-            {!loading && runs.length === 0 && (
-              <tr><td colSpan={4} style={{ padding: 20, textAlign: "center", color: "var(--text-dim)" }}>No runs yet.</td></tr>
-            )}
-            {runs.map((r) => {
-              const hasCounts = r.success_count != null || r.failed_count != null;
-              const total = (r.success_count || 0) + (r.failed_count || 0);
-              return (
-                <tr key={r.run_id} className="hb-row-hover" style={{ borderBottom: "1px solid var(--border)" }}>
-                  <td style={{ padding: "9px 10px" }}>{fmtDateTime(r.start_time)}</td>
-                  <td style={{ padding: "9px 10px" }}>
-                    <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
-                      <StatusDot status={r.status} />
-                      {r.status}
-                    </div>
-                  </td>
-                  <td style={{ padding: "9px 10px", textAlign: "right", fontFamily: "var(--font-mono)" }}>
-                    {fmtDuration(r.duration_seconds)}
-                  </td>
-                  <td style={{ padding: "9px 10px", textAlign: "right", fontFamily: "var(--font-mono)" }}>
-                    {hasCounts ? (
-                      <span>
-                        {total}
-                        {r.failed_count > 0 && <span style={{ color: "var(--danger)" }}> ({r.failed_count} failed)</span>}
-                      </span>
-                    ) : "—"}
-                  </td>
-                </tr>
-              );
-            })}
-          </tbody>
-        </table>
-      </div>
-    </Modal>
+    <>
+      <Modal title={`${bot.bot_name} — run history`} onClose={onClose} width={720}>
+        <ErrorBanner message={error} onDismiss={() => setError("")} />
+        <div className="hb-scroll" style={{ maxHeight: 440, overflowY: "auto" }}>
+          <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 13 }}>
+            <thead>
+              <tr style={{ borderBottom: "1px solid var(--border)" }}>
+                <th style={{ textAlign: "left", padding: "8px 10px", color: "var(--text-muted)", fontWeight: 500, fontSize: 11.5 }}>Started</th>
+                <th style={{ textAlign: "left", padding: "8px 10px", color: "var(--text-muted)", fontWeight: 500, fontSize: 11.5 }}>Status</th>
+                <th style={{ textAlign: "right", padding: "8px 10px", color: "var(--text-muted)", fontWeight: 500, fontSize: 11.5 }}>Duration</th>
+                <th style={{ textAlign: "right", padding: "8px 10px", color: "var(--text-muted)", fontWeight: 500, fontSize: 11.5 }}>Transactions</th>
+                <th style={{ textAlign: "right", padding: "8px 10px", color: "var(--text-muted)", fontWeight: 500, fontSize: 11.5 }}>Logs</th>
+              </tr>
+            </thead>
+            <tbody>
+              {loading && (
+                <tr><td colSpan={5} style={{ padding: 20, textAlign: "center", color: "var(--text-dim)" }}>Loading…</td></tr>
+              )}
+              {!loading && filteredRuns.length === 0 && (
+                <tr><td colSpan={5} style={{ padding: 20, textAlign: "center", color: "var(--text-dim)" }}>No runs in the last {RUN_HISTORY_DAYS} days.</td></tr>
+              )}
+              {filteredRuns.map((r) => {
+                const hasCounts = r.success_count != null || r.failed_count != null;
+                const total = (r.success_count || 0) + (r.failed_count || 0);
+                return (
+                  <tr key={r.run_id} className="hb-row-hover" style={{ borderBottom: "1px solid var(--border)" }}>
+                    <td style={{ padding: "9px 10px" }}>{fmtDateTime(r.start_time)}</td>
+                    <td style={{ padding: "9px 10px" }}>
+                      <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
+                        <StatusDot status={r.status} />
+                        {r.status}
+                      </div>
+                    </td>
+                    <td style={{ padding: "9px 10px", textAlign: "right", fontFamily: "var(--font-mono)" }}>
+                      {fmtDuration(r.duration_seconds)}
+                    </td>
+                    <td style={{ padding: "9px 10px", textAlign: "right", fontFamily: "var(--font-mono)" }}>
+                      {hasCounts ? (
+                        <span>
+                          {total}
+                          {r.failed_count > 0 && <span style={{ color: "var(--danger)" }}> ({r.failed_count} failed)</span>}
+                        </span>
+                      ) : "—"}
+                    </td>
+                    <td style={{ padding: "9px 10px", textAlign: "right" }}>
+                      {(r.status === "Success" || r.status === "Failed") ? (
+                        <Button
+                          variant="ghost"
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            onOpenLogs?.({
+                              run_id: r.run_id,
+                              bot_id: bot.bot_id,
+                              bot_name: bot.bot_name,
+                              client_name: bot.client_name,
+                              status: r.status,
+                              start_time: r.start_time,
+                            });
+                            onClose();
+                          }}
+                        >
+                          <FileText size={12} /> Logs
+                        </Button>
+                      ) : (
+                        <span style={{ color: "var(--text-dim)" }}>—</span>
+                      )}
+                    </td>
+                  </tr>
+                );
+              })}
+            </tbody>
+          </table>
+        </div>
+      </Modal>
+
+      {selectedRun && (
+        <RunLogsModal
+          api={api}
+          bot={bot}
+          run={selectedRun}
+          onClose={() => setSelectedRun(null)}
+        />
+      )}
+    </>
   );
 }
 
-function ReportsView({ api }) {
+function getSenderInfo(m, isInternal, activeClientName, currentUserId) {
+  const isOwn = Number(m.sender_user_id) === Number(currentUserId);
+  const role = (m.sender_role || "").toLowerCase();
+
+  let name = m.sender_name || "";
+  let roleLabel = "";
+  let roleClass = "";
+
+  if (role === "admin") {
+    roleLabel = "Primary Admin";
+    roleClass = "primary-admin";
+  } else if (role === "admin2") {
+    roleLabel = "Admin 2";
+    roleClass = "team-admin";
+  } else if (role === "admin3") {
+    roleLabel = "Admin 3";
+    roleClass = "team-admin";
+  } else if (role === "client") {
+    roleLabel = "Client";
+    roleClass = "client";
+  } else {
+    roleLabel = role ? role.toUpperCase() : "ADMIN";
+    roleClass = "team-admin";
+  }
+
+  if (!name) {
+    if (m.sender_email) {
+      name = m.sender_email.split("@")[0];
+      name = name.charAt(0).toUpperCase() + name.slice(1);
+    } else if (isOwn) {
+      name = "You";
+    } else if (isInternal) {
+      name = roleLabel;
+    } else {
+      name = activeClientName || "Client";
+    }
+  }
+
+  return { name, roleLabel, roleClass, isOwn };
+}
+
+
+function formatChatTime(iso, timezone = "Asia/Kolkata") {
+  const date = parseServerDate(iso);
+  if (!date) return "";
+  try {
+    return new Intl.DateTimeFormat("en-US", {
+      timeZone: timezone || "Asia/Kolkata",
+      hour: "2-digit",
+      minute: "2-digit",
+      hour12: true,
+    }).format(date);
+  } catch (_) {
+    return new Intl.DateTimeFormat("en-US", {
+      timeZone: "Asia/Kolkata",
+      hour: "2-digit",
+      minute: "2-digit",
+      hour12: true,
+    }).format(date);
+  }
+}
+
+function SwipeableMessageRow({
+  message: m,
+  isOwn,
+  senderInfo,
+  onReply,
+  onQuoteClick,
+  activeClientId,
+  chatTimezone,
+  parentMessage,
+}) {
+  const [dragOffset, setDragOffset] = useState(0);
+  const [isDragging, setIsDragging] = useState(false);
+  const startXRef = useRef(0);
+  const startYRef = useRef(0);
+  const currentOffsetRef = useRef(0);
+  const isDraggingRef = useRef(false);
+
+  const handlePointerDown = (e) => {
+    if (e.button != null && e.button !== 0) return;
+    if (e.target.closest("button") || e.target.closest("a") || e.target.closest(".hb-chat-quote-card")) return;
+    startXRef.current = e.clientX;
+    startYRef.current = e.clientY;
+    currentOffsetRef.current = 0;
+    isDraggingRef.current = true;
+    setIsDragging(true);
+    try {
+      e.currentTarget.setPointerCapture?.(e.pointerId);
+    } catch (_) { }
+  };
+
+  const handlePointerMove = (e) => {
+    if (!isDraggingRef.current) return;
+    const deltaX = e.clientX - startXRef.current;
+    const deltaY = Math.abs(e.clientY - startYRef.current);
+    if (deltaY > Math.abs(deltaX) && currentOffsetRef.current === 0) {
+      return;
+    }
+    if (deltaX > 0) {
+      const clamped = Math.min(deltaX * 0.55, 68);
+      currentOffsetRef.current = clamped;
+      setDragOffset(clamped);
+    }
+  };
+
+  const handlePointerEnd = (e) => {
+    if (!isDraggingRef.current) return;
+    isDraggingRef.current = false;
+    setIsDragging(false);
+    try {
+      e.currentTarget.releasePointerCapture?.(e.pointerId);
+    } catch (_) { }
+
+    if (currentOffsetRef.current >= 35) {
+      onReply(m);
+    }
+    setDragOffset(0);
+    currentOffsetRef.current = 0;
+  };
+
+  const triggered = dragOffset >= 35;
+
+  return (
+    <div
+      className="hb-chat-swipe-wrap"
+      onPointerDown={handlePointerDown}
+      onPointerMove={handlePointerMove}
+      onPointerUp={handlePointerEnd}
+      onPointerCancel={handlePointerEnd}
+    >
+      <div
+        className="hb-chat-swipe-indicator"
+        style={{
+          opacity: dragOffset > 8 ? Math.min(dragOffset / 35, 1) : 0,
+          transform: `scale(${Math.min(0.6 + dragOffset / 60, 1.15)})`,
+          background: triggered ? "var(--accent)" : "var(--surface-3)",
+          color: triggered ? "#fff" : "var(--text-muted)",
+        }}
+      >
+        <Reply size={13} />
+      </div>
+
+      <div
+        className={`hb-chat-row ${isOwn ? "own" : "other"}`}
+        id={`msg-${m.id}`}
+        style={{
+          transform: `translateX(${dragOffset}px)`,
+          transition: isDragging ? "none" : "transform 0.22s cubic-bezier(0.18, 0.89, 0.32, 1.28)",
+          width: "100%",
+        }}
+      >
+        {!isOwn && (
+          <div
+            className="hb-chat-mini-avatar"
+            style={
+              activeClientId === "internal"
+                ? { background: "linear-gradient(135deg, var(--accent), var(--accent-strong))", color: "#fff" }
+                : undefined
+            }
+          >
+            {initialsOf(senderInfo.name || senderInfo.roleLabel)}
+          </div>
+        )}
+
+        {isOwn && (
+          <div className="hb-chat-hover-actions own">
+            <button
+              type="button"
+              className="hb-chat-action-btn"
+              title="Reply"
+              onPointerDown={(e) => e.stopPropagation()}
+              onClick={(e) => {
+                e.preventDefault();
+                e.stopPropagation();
+                onReply(m);
+              }}
+            >
+              <Reply size={13} />
+            </button>
+          </div>
+        )}
+
+        <div
+          className={`hb-chat-bubble ${isOwn ? "own" : "other"}`}
+          onDoubleClick={() => onReply(m)}
+          title="Double-click or swipe to reply"
+        >
+          {!isOwn && (activeClientId === "internal" || senderInfo.roleClass !== "client") && (
+            <div className="hb-chat-sender-header">
+              <span className="hb-chat-sender-name">
+                {senderInfo.name}
+              </span>
+              {senderInfo.roleLabel && (
+                <span className={`hb-chat-role-chip ${senderInfo.roleClass}`}>
+                  {senderInfo.roleLabel}
+                </span>
+              )}
+            </div>
+          )}
+
+          {parentMessage && (
+            <div
+              className="hb-chat-quote-card"
+              onClick={(e) => {
+                e.stopPropagation();
+                onQuoteClick(parentMessage.id);
+              }}
+              title="Click to view original message"
+            >
+              <div className="hb-chat-quote-sender">
+                <Reply size={10} />
+                <span>{parentMessage.senderName}</span>
+              </div>
+              <div className="hb-chat-quote-text">{parentMessage.message}</div>
+            </div>
+          )}
+
+          <div className="hb-chat-message-text">{m.message}</div>
+          <div className="hb-chat-bubble-time">
+            <span>{formatChatTime(m.created_at, chatTimezone)}</span>
+            {isOwn && <span className="hb-chat-read-tick">{m.is_read ? "✓✓" : "✓"}</span>}
+          </div>
+        </div>
+
+        {!isOwn && (
+          <div className="hb-chat-hover-actions other">
+            <button
+              type="button"
+              className="hb-chat-action-btn"
+              title="Reply"
+              onPointerDown={(e) => e.stopPropagation()}
+              onClick={(e) => {
+                e.preventDefault();
+                e.stopPropagation();
+                onReply(m);
+              }}
+            >
+              <Reply size={13} />
+            </button>
+          </div>
+        )}
+      </div>
+    </div>
+  );
+}
+
+function MessagesView({ api, role, session, liveEvents }) {
+  const isPrimaryAdmin = role === "admin";
+  const isTeamAdmin = ["admin", "admin2", "admin3"].includes(role);
+  const isAdmin = isTeamAdmin;
+  const [threads, setThreads] = useState([]);
+  const [clients, setClients] = useState([]);
+  const [clientTimezones, setClientTimezones] = useState({});
+  const [activeClientId, setActiveClientId] = useState("");
+  const [activeThreadId, setActiveThreadId] = useState(null);
+  const [newConversationForClient, setNewConversationForClient] = useState(null);
+  const [activeMessages, setActiveMessages] = useState([]);
+  const [replyingTo, setReplyingTo] = useState(null);
+  const [message, setMessage] = useState("");
+  const [subject, setSubject] = useState("");
+  const [search, setSearch] = useState("");
+  const [categoryFilter, setCategoryFilter] = useState("all"); // "all" | "team" | "clients"
+  const [loading, setLoading] = useState(true);
+  const [threadLoading, setThreadLoading] = useState(false);
+  const [sending, setSending] = useState(false);
+  const [error, setError] = useState("");
+  const [success, setSuccess] = useState("");
+  const messagesEndRef = useRef(null);
+
+  const currentUserId = useMemo(() => {
+    try {
+      const token = session?.token;
+      if (!token) return null;
+      const payload = JSON.parse(atob(token.split(".")[1].replace(/-/g, "+").replace(/_/g, "/")));
+      return payload?.sub != null ? Number(payload.sub) : null;
+    } catch (_) {
+      return null;
+    }
+  }, [session?.token]);
+
+  const loadThreads = useCallback(async (showLoader = false) => {
+    if (showLoader) setLoading(true);
+    setError("");
+    try {
+      const res = await api("/messages/threads");
+      const list = Array.isArray(res) ? res : (res?.data || []);
+      setThreads(Array.isArray(list) ? list : []);
+    } catch (err) {
+      setError(err.message || "Failed to load conversations.");
+    } finally {
+      if (showLoader) setLoading(false);
+    }
+  }, [api]);
+
+  const loadThread = useCallback(async (threadId, silent = false) => {
+    if (!threadId) {
+      setActiveMessages([]);
+      return;
+    }
+    if (!silent) setThreadLoading(true);
+    try {
+      const res = await api(`/messages/threads/${threadId}`);
+      const list = Array.isArray(res) ? res : (res?.data || []);
+      setActiveMessages(Array.isArray(list) ? list : []);
+    } catch (err) {
+      setError(err.message || "Failed to load conversation.");
+    } finally {
+      if (!silent) setThreadLoading(false);
+    }
+  }, [api]);
+
+  useEffect(() => {
+    loadThreads(true);
+  }, [loadThreads]);
+
+  useEffect(() => {
+    const timer = setInterval(() => loadThreads(false), 15000);
+    return () => clearInterval(timer);
+  }, [loadThreads]);
+
+  // Live WebSocket refresh for real-time incoming messages
+  useEffect(() => {
+    if (!liveEvents?.length) return;
+    const latest = liveEvents[0];
+    if (latest?.event === "new_message" || latest?.sound_type === "message") {
+      loadThreads(false);
+      if (activeThreadId) {
+        loadThread(activeThreadId, true);
+      }
+    }
+  }, [liveEvents, activeThreadId, loadThread, loadThreads]);
+
+  useEffect(() => {
+    if (!isAdmin) return;
+    (async () => {
+      try {
+        const res = await api("/clients/");
+        const list = res?.data || res || [];
+        setClients(Array.isArray(list) ? list : []);
+        if (Array.isArray(list)) {
+          setClientTimezones((prev) => {
+            const next = { ...prev };
+            list.forEach((c) => {
+              if (c?.client_id && c?.timezone) next[Number(c.client_id)] = c.timezone;
+            });
+            return next;
+          });
+        }
+      } catch (err) {
+        setError(err.message || "Failed to load clients.");
+      }
+    })();
+  }, [api, isAdmin]);
+
+  // Keep the active client's timezone fresh
+  useEffect(() => {
+    if (activeClientId === "internal") return;
+    const id = Number(activeClientId || session?.clientId);
+    if (!id) return;
+    const known = clientTimezones[id];
+    if (known) return;
+    (async () => {
+      try {
+        const res = await api(`/clients/${id}`);
+        const client = res?.data || res;
+        if (client?.timezone) {
+          setClientTimezones((prev) => ({ ...prev, [id]: client.timezone }));
+        }
+      } catch (_) { /* keep chat usable if timezone lookup is unavailable */ }
+    })();
+  }, [api, activeClientId, session?.clientId, clientTimezones]);
+
+  // Build conversations: Internal Team chat + client chats
+  const conversations = useMemo(() => {
+    if (!isAdmin) {
+      if (!threads.length) return [];
+      const latest = [...threads].sort((a, b) =>
+        new Date(b.last_message_at || b.updated_at || 0).getTime() -
+        new Date(a.last_message_at || a.updated_at || 0).getTime()
+      )[0];
+      return [{
+        clientId: Number(latest?.client_id || session?.clientId),
+        name: "StayAhead Support",
+        threadId: latest?.id,
+        latest,
+        unread: threads.reduce((sum, t) => sum + Number(t.unread_count || 0), 0),
+        isInternal: false,
+      }];
+    }
+
+    const map = new Map();
+    let internalConversation = null;
+
+    for (const thread of threads) {
+      const isInternal = Boolean(thread.is_internal || thread.client_id == null);
+
+      if (isInternal) {
+        const latestTime = new Date(thread.last_message_at || thread.updated_at || 0).getTime();
+        const existingTime = internalConversation
+          ? new Date(internalConversation.latest?.last_message_at || internalConversation.latest?.updated_at || 0).getTime()
+          : -1;
+
+        if (!internalConversation || latestTime >= existingTime) {
+          internalConversation = {
+            clientId: "internal",
+            name: "Internal Team",
+            threadId: thread.id,
+            latest: thread,
+            unread: Number(thread.unread_count || 0) + Number(internalConversation?.unread || 0),
+            timezone: "Asia/Kolkata",
+            isInternal: true,
+          };
+        } else {
+          internalConversation.unread += Number(thread.unread_count || 0);
+        }
+        continue;
+      }
+
+      const id = Number(thread.client_id);
+      const existing = map.get(id);
+      const latestTime = new Date(thread.last_message_at || thread.updated_at || 0).getTime();
+      const existingTime = existing ? new Date(existing.latest?.last_message_at || existing.latest?.updated_at || 0).getTime() : -1;
+      if (!existing || latestTime >= existingTime) {
+        map.set(id, {
+          clientId: id,
+          name: thread.client_name || `Client #${id}`,
+          threadId: thread.id,
+          latest: thread,
+          unread: Number(thread.unread_count || 0) + Number(existing?.unread || 0),
+          timezone: thread.timezone || clientTimezones[id] || null,
+          isInternal: false,
+        });
+      } else {
+        existing.unread += Number(thread.unread_count || 0);
+        if (!existing.timezone && (thread.timezone || clientTimezones[id])) {
+          existing.timezone = thread.timezone || clientTimezones[id];
+        }
+      }
+    }
+
+    // Always provide "Internal Team" chat option for all admins
+    if (!internalConversation) {
+      internalConversation = {
+        clientId: "internal",
+        name: "Internal Team",
+        threadId: null,
+        latest: null,
+        unread: 0,
+        timezone: "Asia/Kolkata",
+        isInternal: true,
+      };
+    }
+
+    const clientConvs = Array.from(map.values()).sort((a, b) =>
+      new Date(b.latest?.last_message_at || 0).getTime() - new Date(a.latest?.last_message_at || 0).getTime()
+    );
+
+    // Return Internal Team at the top, then client conversations
+    return [internalConversation, ...clientConvs];
+  }, [isAdmin, threads, clientTimezones, session?.clientId]);
+
+  const filteredConversations = useMemo(() => {
+    let list = conversations;
+    if (categoryFilter === "team") {
+      list = list.filter((c) => c.isInternal);
+    } else if (categoryFilter === "clients") {
+      list = list.filter((c) => !c.isInternal);
+    }
+    const q = search.trim().toLowerCase();
+    if (!q) return list;
+    return list.filter((c) => [c.name, c.latest?.subject, c.latest?.last_message]
+      .filter(Boolean)
+      .some((v) => String(v).toLowerCase().includes(q)));
+  }, [conversations, search, categoryFilter]);
+
+  const activeConversation = conversations.find(
+    (c) => String(c.clientId) === String(activeClientId)
+  ) || null;
+
+  useEffect(() => {
+    if (!isAdmin && !activeClientId && session?.clientId) {
+      setActiveClientId(String(session.clientId));
+      return;
+    }
+    if (!activeClientId && conversations.length) {
+      setActiveClientId(String(conversations[0].clientId));
+      setActiveThreadId(conversations[0].threadId || null);
+    }
+  }, [activeClientId, conversations, isAdmin, session?.clientId]);
+
+  useEffect(() => {
+    if (!activeConversation) {
+      setActiveThreadId(null);
+      setActiveMessages([]);
+      return;
+    }
+    if (newConversationForClient && String(newConversationForClient) === String(activeClientId)) return;
+    if (String(activeClientId) === String(activeConversation.clientId) && activeConversation.threadId) {
+      setActiveThreadId(activeConversation.threadId);
+    }
+  }, [activeConversation, activeClientId, newConversationForClient]);
+
+  useEffect(() => {
+    loadThread(activeThreadId);
+    if (!activeThreadId) return;
+    const timer = setInterval(() => loadThread(activeThreadId, true), 8000);
+    return () => clearInterval(timer);
+  }, [activeThreadId, loadThread]);
+
+  // Mark incoming messages read
+  useEffect(() => {
+    if (!activeMessages.length) return;
+    const unread = activeMessages.filter(
+      (m) => !m.is_read && Number(m.sender_user_id) !== Number(currentUserId)
+    );
+    if (!unread.length) return;
+
+    let cancelled = false;
+    (async () => {
+      await Promise.all(unread.map(async (m) => {
+        try {
+          await api(`/messages/${m.id}/read`, { method: "PATCH" });
+        } catch (_) { /* keep chat usable */ }
+      }));
+      if (!cancelled) {
+        setActiveMessages((prev) => prev.map((m) =>
+          unread.some((u) => u.id === m.id)
+            ? { ...m, is_read: true, read_at: new Date().toISOString() }
+            : m
+        ));
+        loadThreads(false);
+      }
+    })();
+    return () => { cancelled = true; };
+  }, [activeMessages.length, activeThreadId, currentUserId, api, loadThreads]);
+
+  useEffect(() => {
+    messagesEndRef.current?.scrollIntoView({ behavior: "smooth", block: "end" });
+  }, [activeMessages.length, activeThreadId]);
+
+  const messagesMap = useMemo(() => {
+    const map = new Map();
+    activeMessages.forEach((m) => {
+      if (m?.id != null) map.set(Number(m.id), m);
+    });
+    return map;
+  }, [activeMessages]);
+
+  const scrollToMessage = useCallback((msgId) => {
+    const el = document.getElementById(`msg-${msgId}`);
+    if (el) {
+      el.scrollIntoView({ behavior: "smooth", block: "center" });
+      el.style.transition = "filter 0.3s, transform 0.3s";
+      el.style.filter = "drop-shadow(0 0 10px var(--accent))";
+      setTimeout(() => {
+        el.style.filter = "none";
+      }, 1400);
+    }
+  }, []);
+
+  const handleReply = useCallback((m) => {
+    const activeDispName = activeClientId === "internal"
+      ? "Internal Team"
+      : (activeConversation?.name || "Support");
+    const sender = getSenderInfo(m, activeClientId === "internal", activeDispName, currentUserId);
+    setReplyingTo({
+      id: m.id,
+      message: m.message,
+      senderName: sender.isOwn ? "You" : sender.name,
+      subject: m.subject,
+    });
+    setTimeout(() => {
+      const textarea = document.querySelector(".hb-chat-composer textarea");
+      textarea?.focus();
+      textarea?.scrollIntoView?.({ behavior: "smooth", block: "nearest" });
+    }, 40);
+  }, [activeClientId, activeConversation?.name, currentUserId]);
+
+  const chooseConversation = useCallback((clientId, threadId = null) => {
+    setActiveClientId(String(clientId));
+    setActiveThreadId(threadId ? Number(threadId) : null);
+    setNewConversationForClient(null);
+    setReplyingTo(null);
+    setMessage("");
+    setSubject("");
+    setSuccess("");
+    setError("");
+  }, []);
+
+  const startNewChat = (clientId) => {
+    if (!clientId) return;
+    setActiveClientId(String(clientId));
+    setActiveThreadId(null);
+    setNewConversationForClient(String(clientId));
+    setReplyingTo(null);
+    setActiveMessages([]);
+    setMessage("");
+    setSubject(clientId === "internal" ? "Internal Team Discussion" : "");
+    setSuccess("");
+  };
+
+  const sendMessage = async (e) => {
+    e?.preventDefault?.();
+    const text = message.trim();
+    const isInternal = activeClientId === "internal" || activeConversation?.isInternal;
+
+    const targetClientId = isInternal
+      ? null
+      : (isAdmin ? (activeConversation?.clientId || activeClientId) : session?.clientId);
+
+    if (!isInternal && !targetClientId) return;
+    if (!text || sending) return;
+
+    const last = activeMessages[activeMessages.length - 1];
+    const defaultSubject = isInternal ? "Internal Team Discussion" : "HeartBeat Support";
+    const cleanSubject = String(
+      subject.trim() || replyingTo?.subject || last?.subject || activeConversation?.latest?.subject || defaultSubject
+    ).replace(/^(re:\s*)+/i, "").trim();
+    const finalSubject = activeThreadId ? `Re: ${cleanSubject}` : cleanSubject;
+
+    // FIX: Only link reply_to_id if the user explicitly clicked/swiped to reply!
+    const replyTargetId = replyingTo?.id ? Number(replyingTo.id) : null;
+
+    setSending(true);
+    setError("");
+    setSuccess("");
+    try {
+      const res = await api("/messages", {
+        method: "POST",
+        body: JSON.stringify({
+          client_id: isInternal ? null : Number(targetClientId),
+          thread_id: activeThreadId ? Number(activeThreadId) : null,
+          reply_to_id: replyTargetId,
+          subject: finalSubject,
+          message: text,
+        }),
+      });
+
+      const created = res?.data || res;
+      setMessage("");
+      setSubject("");
+      setReplyingTo(null);
+      if (created) setActiveMessages((prev) => [...prev, created]);
+      if (created?.thread_id) setActiveThreadId(Number(created.thread_id));
+      setNewConversationForClient(null);
+      await loadThreads(false);
+      setSuccess("Message sent");
+      window.setTimeout(() => setSuccess(""), 1800);
+    } catch (err) {
+      setError(err.message || "Failed to send message.");
+    } finally {
+      setSending(false);
+    }
+  };
+
+  const onComposerKeyDown = (e) => {
+    if (e.key === "Escape" && replyingTo) {
+      setReplyingTo(null);
+      return;
+    }
+    if (e.key === "Enter" && !e.shiftKey) {
+      e.preventDefault();
+      sendMessage(e);
+    }
+  };
+
+  const parseServerDate = (iso) => {
+    if (!iso) return null;
+    if (iso instanceof Date) return iso;
+    const value = String(iso).trim();
+    if (!value) return null;
+    const normalized = /(?:Z|[+-]\d{2}:?\d{2})$/i.test(value) ? value : `${value}Z`;
+    const date = new Date(normalized);
+    return Number.isNaN(date.getTime()) ? null : date;
+  };
+
+  const getChatTimezone = (clientId = activeClientId) =>
+    clientId === "internal"
+      ? "Asia/Kolkata"
+      : (clientTimezones[Number(clientId)] || (Number(clientId) === Number(session?.clientId) ? session?.timezone : null) || "Asia/Kolkata");
+
+  const getZonedParts = (iso, timezone) => {
+    const date = parseServerDate(iso);
+    if (!date) return null;
+    const parts = new Intl.DateTimeFormat("en-US", {
+      timeZone: timezone, year: "numeric", month: "2-digit", day: "2-digit",
+      hour: "2-digit", minute: "2-digit", second: "2-digit", hour12: false,
+    }).formatToParts(date);
+    const out = {};
+    parts.forEach((p) => { if (p.type !== "literal") out[p.type] = p.value; });
+    return out;
+  };
+
+  const formatChatTime = (iso, timezone = getChatTimezone()) => {
+    const date = parseServerDate(iso);
+    if (!date) return "";
+    return new Intl.DateTimeFormat("en-US", {
+      timeZone: timezone, hour: "2-digit", minute: "2-digit", hour12: true,
+    }).format(date);
+  };
+
+  const formatListTime = (iso, timezone = getChatTimezone()) => {
+    const date = parseServerDate(iso);
+    if (!date) return "";
+    const now = new Date();
+    const diffMs = now.getTime() - date.getTime();
+    if (diffMs >= 0 && diffMs < 60000) return "now";
+    if (diffMs >= 60000 && diffMs < 3600000) return `${Math.floor(diffMs / 60000)}m`;
+    if (diffMs >= 3600000 && diffMs < 86400000) return `${Math.floor(diffMs / 3600000)}h`;
+    const diffDays = Math.floor(diffMs / 86400000);
+    if (diffDays === 1) return "1d";
+    if (diffDays < 7) {
+      try {
+        return new Intl.DateTimeFormat("en-US", { timeZone: timezone, weekday: "short" }).format(date);
+      } catch (_) {
+        return new Intl.DateTimeFormat("en-US", { weekday: "short" }).format(date);
+      }
+    }
+    try {
+      return new Intl.DateTimeFormat("en-US", { timeZone: timezone, day: "numeric", month: "short" }).format(date);
+    } catch (_) {
+      return new Intl.DateTimeFormat("en-US", { day: "numeric", month: "short" }).format(date);
+    }
+  };
+
+  const dayLabel = (iso, timezone = getChatTimezone()) => {
+    const p = getZonedParts(iso, timezone);
+    if (!p) return "";
+    const now = new Date();
+    const n = getZonedParts(now.toISOString(), timezone);
+    if (p.year === n.year && p.month === n.month && p.day === n.day) return "Today";
+    const yesterday = new Date(now.getTime() - 86400000);
+    const y = getZonedParts(yesterday.toISOString(), timezone);
+    if (p.year === y.year && p.month === y.month && p.day === y.day) return "Yesterday";
+    return new Intl.DateTimeFormat("en-US", {
+      timeZone: timezone, day: "2-digit", month: "short", year: p.year !== n.year ? "numeric" : undefined,
+    }).format(parseServerDate(iso));
+  };
+
+  let previousDay = "";
+  const activeDisplayName = activeClientId === "internal"
+    ? "Internal Team"
+    : (isAdmin
+      ? (activeConversation?.name || clients.find((c) => String(c.client_id) === String(activeClientId))?.client_name || "Client")
+      : "StayAhead Support");
+
+  return (
+    <div className="hb-chat-page">
+      <div className="hb-chat-heading">
+        <div>
+          <div className="hb-eyebrow">Communication</div>
+          <h1 className="hb-messages-title">{activeClientId === "internal" ? "Internal Team Chat" : (isAdmin ? "Messages" : "StayAhead Support")}</h1>
+          <p className="hb-messages-subtitle">
+            {activeClientId === "internal"
+              ? "Confidential team discussions between admins (admin, admin2, admin3)."
+              : (isPrimaryAdmin
+                ? "Stay connected with your team and clients."
+                : (isAdmin ? "Internal team communication." : "Chat directly with the StayAhead support team."))}
+          </p>
+        </div>
+        <Button variant="ghost" onClick={() => loadThreads(true)} disabled={loading}>
+          <RotateCcw size={13} className={loading ? "hb-spin" : ""} /> Refresh
+        </Button>
+      </div>
+
+      <ErrorBanner message={error} onDismiss={() => setError("")} />
+      {success && <InfoBanner message={success} onDismiss={() => setSuccess("")} />}
+
+      <div className="hb-chat-shell hb-chat-shell-v2">
+        <aside className="hb-chat-sidebar hb-chat-sidebar-v2">
+          <div className="hb-chat-sidebar-top">
+            <div className="hb-chat-sidebar-title">
+              <strong>Chats</strong>
+              {conversations.length > 0 && <span>{conversations.length}</span>}
+            </div>
+            <div className="hb-message-search-wrap">
+              <Search size={14} />
+              <input value={search} onChange={(e) => setSearch(e.target.value)} placeholder="Search" />
+            </div>
+            {isAdmin && (
+              <div className="hb-chat-category-tabs">
+                <button
+                  type="button"
+                  className={`hb-chat-tab-pill ${categoryFilter === "all" ? "active" : ""}`}
+                  onClick={() => setCategoryFilter("all")}
+                >
+                  All
+                </button>
+                <button
+                  type="button"
+                  className={`hb-chat-tab-pill ${categoryFilter === "team" ? "active" : ""}`}
+                  onClick={() => setCategoryFilter("team")}
+                >
+                  Team
+                </button>
+                <button
+                  type="button"
+                  className={`hb-chat-tab-pill ${categoryFilter === "clients" ? "active" : ""}`}
+                  onClick={() => setCategoryFilter("clients")}
+                >
+                  Clients
+                </button>
+              </div>
+            )}
+          </div>
+
+          <div className="hb-chat-conversation-list hb-scroll">
+            {loading && !conversations.length ? (
+              <div className="hb-chat-empty"><Loader2 size={18} className="hb-spin" /> Loading chats…</div>
+            ) : filteredConversations.length === 0 ? (
+              <div className="hb-chat-empty"><MessageSquare size={20} /><span>{search ? "No chats found" : "No conversations yet"}</span></div>
+            ) : filteredConversations.map((c) => (
+              <button
+                key={c.clientId}
+                type="button"
+                className={`hb-chat-conversation hb-chat-conversation-v2${String(activeClientId) === String(c.clientId) ? " active" : ""}`}
+                onClick={() => chooseConversation(c.clientId, c.threadId)}
+              >
+                <div className={`hb-chat-avatar hb-chat-avatar-v2 ${c.unread > 0 ? "has-unread" : ""}`} style={c.isInternal ? { background: "linear-gradient(135deg, var(--accent), var(--accent-strong))", color: "#fff" } : undefined}>
+                  {c.isInternal ? "👥" : initialsOf(c.name)}
+                </div>
+                <div className="hb-chat-conversation-copy">
+                  <div className="hb-chat-conversation-top">
+                    <div style={{ display: "inline-flex", alignItems: "center", gap: 6, minWidth: 0 }}>
+                      <strong style={{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{c.name}</strong>
+                      {c.isInternal && (
+                        <span style={{ fontSize: 9.5, padding: "1px 6px", borderRadius: 4, background: "var(--accent-dim)", color: "var(--accent)", fontWeight: 700, flexShrink: 0 }}>
+                          Team
+                        </span>
+                      )}
+                    </div>
+                    <span className="hb-chat-list-time">{formatListTime(c.latest?.last_message_at, c.timezone || clientTimezones[Number(c.clientId)] || "Asia/Kolkata")}</span>
+                  </div>
+                  <div className="hb-chat-conversation-preview">
+                    <span className={c.unread > 0 ? "unread-bold" : ""}>
+                      {c.latest?.last_message ||
+                        c.latest?.subject ||
+                        (c.isInternal ? "Internal team discussion" : "Start a conversation")}
+                    </span>
+
+                    {c.unread > 0 && (
+                      <span className="hb-chat-ig-dot" title={`${c.unread} unread`} />
+                    )}
+                  </div>
+                </div>
+              </button>
+            ))}
+          </div>
+
+          {isAdmin && (
+            <div className="hb-chat-new-wrap hb-chat-new-wrap-v2">
+              <select value="" onChange={(e) => startNewChat(e.target.value)} className="hb-control">
+                <option value="">＋ New conversation</option>
+                <option value="internal">👥 Internal Team Chat</option>
+                {clients.length > 0 && (
+                  <optgroup label="Client Chats">
+                    {clients.map((c) => <option key={c.client_id} value={c.client_id}>{c.client_name}</option>)}
+                  </optgroup>
+                )}
+              </select>
+            </div>
+          )}
+        </aside>
+
+        <section className="hb-chat-main hb-chat-main-v2">
+          {activeClientId ? (
+            <>
+              <header className="hb-chat-main-head hb-chat-main-head-v2">
+                <div className="hb-chat-avatar large hb-chat-avatar-v2" style={activeClientId === "internal" ? { background: "linear-gradient(135deg, #3b82f6, #8b5cf6)", color: "#fff" } : undefined}>
+                  {activeClientId === "internal" ? "👥" : initialsOf(activeDisplayName)}
+                </div>
+                <div className="hb-chat-person">
+                  <div style={{ display: "inline-flex", alignItems: "center", gap: 7 }}>
+                    <strong>{activeDisplayName}</strong>
+                    {activeClientId === "internal" && (
+                      <span style={{ fontSize: 10, padding: "2px 7px", borderRadius: 5, background: "rgba(59,130,246,0.18)", color: "var(--accent-2)", fontWeight: 700 }}>
+                        Internal Admins
+                      </span>
+                    )}
+                  </div>
+                  <span>
+                    {activeClientId === "internal"
+                      ? "Internal discussion between admin, admin2, and admin3"
+                      : (activeThreadId ? (activeMessages.length ? `${activeMessages.length} messages` : "Conversation") : "New conversation")}
+                  </span>
+                </div>
+                {activeThreadId && <div className="hb-chat-thread-subject">{activeMessages[0]?.subject?.replace(/^(re:\s*)+/i, "") || activeConversation?.latest?.subject || "Conversation"}</div>}
+              </header>
+
+              <div className="hb-chat-thread hb-scroll">
+                {threadLoading ? (
+                  <div className="hb-chat-welcome"><Loader2 size={19} className="hb-spin" /><span>Opening conversation…</span></div>
+                ) : activeMessages.length === 0 ? (
+                  <div className="hb-chat-welcome">
+                    <div className="hb-message-empty-icon"><MessageSquare size={20} /></div>
+                    <strong>Start the conversation</strong>
+                    <span>{activeClientId === "internal" ? "Send a message to your internal admin team." : (isAdmin ? "Send a friendly message to this client." : "Send a message to the StayAhead support team.")}</span>
+                  </div>
+                ) : activeMessages.map((m) => {
+                  const senderInfo = getSenderInfo(m, activeClientId === "internal", activeDisplayName, currentUserId);
+                  const chatTimezone = getChatTimezone(activeClientId);
+                  const label = dayLabel(m.created_at, chatTimezone);
+                  const showDay = label !== previousDay;
+                  previousDay = label;
+
+                  const parent = m.reply_to_id ? messagesMap.get(Number(m.reply_to_id)) : null;
+                  const parentSender = parent
+                    ? getSenderInfo(parent, activeClientId === "internal", activeDisplayName, currentUserId)
+                    : null;
+                  const parentMessage = parent ? {
+                    id: parent.id,
+                    message: parent.message,
+                    senderName: parentSender.isOwn ? "You" : parentSender.name,
+                  } : null;
+
+                  return (
+                    <React.Fragment key={m.id}>
+                      {showDay && <div className="hb-chat-day"><span>{label}</span></div>}
+                      <SwipeableMessageRow
+                        message={m}
+                        isOwn={senderInfo.isOwn}
+                        senderInfo={senderInfo}
+                        onReply={handleReply}
+                        onQuoteClick={scrollToMessage}
+                        activeClientId={activeClientId}
+                        chatTimezone={chatTimezone}
+                        parentMessage={parentMessage}
+                      />
+                    </React.Fragment>
+                  );
+                })}
+                <div ref={messagesEndRef} />
+              </div>
+
+              <form className="hb-chat-composer hb-chat-composer-v2" onSubmit={sendMessage}>
+                {!activeThreadId && (
+                  <input className="hb-chat-subject-input" value={subject} onChange={(e) => setSubject(e.target.value)} placeholder="Subject" />
+                )}
+                {replyingTo && (
+                  <div className="hb-chat-reply-banner">
+                    <div className="hb-chat-reply-banner-content">
+                      <Reply size={14} className="hb-chat-reply-banner-icon" />
+                      <div className="hb-chat-reply-banner-text">
+                        <span className="hb-chat-reply-banner-sender">Replying to {replyingTo.senderName}:</span>
+                        <span className="hb-chat-reply-banner-snippet">{replyingTo.message}</span>
+                      </div>
+                    </div>
+                    <button
+                      type="button"
+                      className="hb-chat-reply-close"
+                      onClick={() => setReplyingTo(null)}
+                      title="Cancel reply"
+                    >
+                      <X size={14} />
+                    </button>
+                  </div>
+                )}
+                <div className="hb-chat-composer-row">
+                  <textarea
+                    value={message}
+                    onChange={(e) => setMessage(e.target.value)}
+                    onKeyDown={onComposerKeyDown}
+                    placeholder={replyingTo ? `Replying to ${replyingTo.senderName}…` : "Message…"}
+                    rows={1}
+                  />
+                  <button type="submit" className="hb-chat-send" disabled={sending || !message.trim()} title="Send message">
+                    {sending ? <Loader2 size={18} className="hb-spin" /> : <Send size={18} />}
+                  </button>
+                </div>
+                <div className="hb-chat-composer-hint">Enter to send · Shift + Enter for new line</div>
+              </form>
+            </>
+          ) : (
+            <div className="hb-chat-welcome full">
+              <div className="hb-chat-empty-hero"><MessageSquare size={22} /></div>
+              <strong>{isAdmin ? "Select a chat" : "No messages yet"}</strong>
+              <span>{isAdmin ? "Choose a client from the left to start chatting." : "Your conversation with StayAhead will appear here."}</span>
+            </div>
+          )}
+        </section>
+      </div>
+    </div>
+  );
+}
+
+function ReportsView({ api, onOpenLogs, isAdmin }) {
   const [rows, setRows] = useState([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
   const [selectedBot, setSelectedBot] = useState(null);
   const [department, setDepartment] = useState(null);
-  const [period, setPeriod] = useState("all");
+  const [period, setPeriod] = useState("day");
+  const [search, setSearch] = useState("");
 
   const departmentOptions = useDepartmentOptions(api);
   const filterGroups = useMemo(() => [
     { key: "department", icon: Building2, label: "Department", value: department, onChange: setDepartment, options: departmentOptions },
-    { key: "period", icon: CalendarClock, label: "Period", value: period, onChange: (v) => setPeriod(v || "all"), options: PERIOD_OPTIONS, isActive: (v) => v && v !== "all" },
+    { key: "period", icon: CalendarClock, label: "Period", value: period, onChange: (v) => setPeriod(v || "day"), options: PERIOD_OPTIONS, isActive: (v) => v && v !== "day" },
   ], [department, departmentOptions, period]);
 
   useEffect(() => {
@@ -1913,16 +4286,40 @@ function ReportsView({ api }) {
     })();
   }, [api, department, period]);
 
+  const filteredRows = useMemo(() => {
+    const q = search.trim().toLowerCase();
+    if (!q) return rows;
+    return rows.filter((r) => `${r.bot_name || ""} ${r.client_name || ""} ${r.department || ""}`.toLowerCase().includes(q));
+  }, [rows, search]);
+
   return (
     <div>
       <ErrorBanner message={error} onDismiss={() => setError("")} />
-      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", marginBottom: 16, flexWrap: "wrap", gap: 10 }}>
-        <div style={{ color: "var(--text-muted)", fontSize: 13, paddingTop: 8 }}>
-          {rows.length} bot{rows.length === 1 ? "" : "s"} — click a row to see run history
+
+      <div style={{ display: "flex", flexWrap: "wrap", alignItems: "center", gap: 8, padding: 10, marginBottom: 14, background: "var(--surface)", border: "1px solid var(--border)", borderRadius: 12 }}>
+        <div style={{ position: "relative", flex: "1 1 260px", minWidth: 200 }}>
+          <Search size={14} style={{ position: "absolute", left: 11, top: "50%", transform: "translateY(-50%)", color: "var(--text-dim)", pointerEvents: "none" }} />
+          <input
+            value={search}
+            onChange={(e) => setSearch(e.target.value)}
+            placeholder="Search bot, client or department"
+            aria-label="Search bot, client or department"
+            style={{
+              width: "100%", boxSizing: "border-box", padding: "9px 12px 9px 34px",
+              background: "var(--surface-2)", color: "var(--text)", border: "1px solid var(--border)",
+              borderRadius: 9, outline: "none", fontSize: 13,
+            }}
+            onFocus={(e) => { e.currentTarget.style.borderColor = "var(--accent)"; }}
+            onBlur={(e) => { e.currentTarget.style.borderColor = "var(--border)"; }}
+          />
         </div>
-        <div>
-          <FilterPopover groups={filterGroups} />
-          <ActiveFilterChips groups={filterGroups} />
+        <FilterPopover groups={filterGroups} />
+        <ActiveFilterChips groups={filterGroups} />
+      </div>
+
+      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", marginBottom: 16, flexWrap: "wrap", gap: 10 }}>
+        <div style={{ color: "var(--text-muted)", fontSize: 13 }}>
+          {filteredRows.length} bot{filteredRows.length === 1 ? "" : "s"}{search.trim() && rows.length !== filteredRows.length ? ` of ${rows.length}` : ""} — click a row to see run history
         </div>
       </div>
 
@@ -1944,10 +4341,12 @@ function ReportsView({ api }) {
               {loading && (
                 <tr><td colSpan={7} style={{ padding: 24, textAlign: "center", color: "var(--text-dim)" }}>Loading…</td></tr>
               )}
-              {!loading && rows.length === 0 && (
-                <tr><td colSpan={7} style={{ padding: 24, textAlign: "center", color: "var(--text-dim)" }}>No bots yet.</td></tr>
+              {!loading && filteredRows.length === 0 && (
+                <tr><td colSpan={7} style={{ padding: 24, textAlign: "center", color: "var(--text-dim)" }}>
+                  {rows.length === 0 ? "No bots yet." : "No bots match your search."}
+                </td></tr>
               )}
-              {rows.map((r) => {
+              {filteredRows.map((r) => {
                 const total = r.total_runs || 0;
                 const rate = total > 0 ? Math.round((r.success_count / total) * 100) : null;
                 return (
@@ -1987,18 +4386,17 @@ function ReportsView({ api }) {
       </div>
 
       {selectedBot && (
-        <BotRunHistoryModal api={api} bot={selectedBot} onClose={() => setSelectedBot(null)} />
+        <BotRunHistoryModal
+          api={api}
+          bot={selectedBot}
+          onClose={() => setSelectedBot(null)}
+          onOpenLogs={isAdmin ? onOpenLogs : null}   // client ku null → logs option hide
+        />
       )}
     </div>
   );
 }
 
-/* ------------------------------------------------------------------ */
-/* Failures — dedicated view for triaging failed runs: breakdown by    */
-/* failure stage, then the full list with error messages, filterable   */
-/* by department / client / period. Reuses the same query params the   */
-/* rest of the dashboard already established.                          */
-/* ------------------------------------------------------------------ */
 function FailureStageBar({ stage, count, maxCount, index }) {
   const pct = maxCount > 0 ? Math.round((count / maxCount) * 100) : 0;
   return (
@@ -2018,7 +4416,89 @@ function FailureStageBar({ stage, count, maxCount, index }) {
     </div>
   );
 }
+/* ------------------------------------------------------------------ */
+/* Failures — dedicated view for triaging failed runs: breakdown by    */
+/* failure stage, then the full list with error messages, filterable   */
+/* by department / client / period. Reuses the same query params the   */
+/* rest of the dashboard already established.                          */
+/* ------------------------------------------------------------------ */
+/* ------------------------------------------------------------------ */
+/* NEW: BotFailuresModal — per-bot failed-run list with the same        */
+/* expand-to-see-full-error-message behaviour the old flat table had.   */
+/* ------------------------------------------------------------------ */
+function BotFailuresModal({ bot, rows, onClose }) {
+  const [expandedRow, setExpandedRow] = useState(null);
+  const botRows = useMemo(
+    () => rows
+      .filter((r) => (r.bot_id ?? r.bot_name) === (bot.bot_id ?? bot.bot_name))
+      .sort((a, b) => new Date(b.start_time || 0) - new Date(a.start_time || 0)),
+    [rows, bot]
+  );
 
+  return (
+    <Modal title={`${bot.bot_name} — failed runs`} onClose={onClose} width={720}>
+      <div className="hb-scroll" style={{ maxHeight: 460, overflowY: "auto" }}>
+        <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 13 }}>
+          <thead>
+            <tr style={{ borderBottom: "1px solid var(--border)" }}>
+              <th style={{ textAlign: "left", padding: "8px 10px", color: "var(--text-muted)", fontWeight: 500, fontSize: 11.5 }}>Stage</th>
+              <th style={{ textAlign: "left", padding: "8px 10px", color: "var(--text-muted)", fontWeight: 500, fontSize: 11.5 }}>Error</th>
+              <th style={{ textAlign: "right", padding: "8px 10px", color: "var(--text-muted)", fontWeight: 500, fontSize: 11.5 }}>When</th>
+            </tr>
+          </thead>
+          <tbody>
+            {botRows.length === 0 && (
+              <tr><td colSpan={3} style={{ padding: 20, textAlign: "center", color: "var(--text-dim)" }}>No failed runs found.</td></tr>
+            )}
+            {botRows.map((r) => {
+              const isExpanded = expandedRow === r.run_id;
+              return (
+                <React.Fragment key={r.run_id}>
+                  <tr
+                    className="hb-row-hover"
+                    onClick={() => setExpandedRow(isExpanded ? null : r.run_id)}
+                    style={{ borderBottom: isExpanded ? "none" : "1px solid var(--border)", cursor: "pointer" }}
+                  >
+                    <td style={{ padding: "9px 10px" }}><Badge tone="danger">{r.failure_stage || "Unknown"}</Badge></td>
+                    <td style={{
+                      padding: "9px 10px", color: "var(--text-muted)", maxWidth: 320,
+                      overflow: "hidden", textOverflow: "ellipsis", whiteSpace: isExpanded ? "normal" : "nowrap",
+                    }}>
+                      {r.error_message || "—"}
+                    </td>
+                    <td style={{ padding: "9px 10px", textAlign: "right", fontFamily: "var(--font-mono)", fontSize: 11.5, color: "var(--text-dim)" }}>
+                      {timeAgo(r.start_time)}
+                    </td>
+                  </tr>
+                  {isExpanded && (
+                    <tr style={{ borderBottom: "1px solid var(--border)" }}>
+                      <td colSpan={3} style={{ padding: "0 10px 12px" }}>
+                        <div style={{
+                          background: "var(--surface-2)", border: "1px solid var(--border)", borderRadius: 8,
+                          padding: "10px 12px", fontFamily: "var(--font-mono)", fontSize: 12, color: "var(--text-muted)",
+                        }}>
+                          {r.error_message || "No error message was captured for this run."}
+                        </div>
+                      </td>
+                    </tr>
+                  )}
+                </React.Fragment>
+              );
+            })}
+          </tbody>
+        </table>
+      </div>
+    </Modal>
+  );
+}
+
+/* ------------------------------------------------------------------ */
+/* Failures — dedicated view for triaging failed runs. Grouped by bot   */
+/* (same pattern as the Logs view), with a per-bot modal for the full   */
+/* list of failed runs and error messages. Default period is "day" so   */
+/* it opens on today's failures; the period filter (week/month/all)     */
+/* re-queries the backend the same way Reports and the Dashboard do.    */
+/* ------------------------------------------------------------------ */
 function FailuresView({ api, isAdmin }) {
   const [rows, setRows] = useState([]);
   const [stageSummary, setStageSummary] = useState([]);
@@ -2026,8 +4506,8 @@ function FailuresView({ api, isAdmin }) {
   const [error, setError] = useState("");
   const [department, setDepartment] = useState(null);
   const [clientId, setClientId] = useState(null);
-  const [period, setPeriod] = useState("week");
-  const [expandedRow, setExpandedRow] = useState(null);
+  const [period, setPeriod] = useState("day");
+  const [selectedBot, setSelectedBot] = useState(null);
 
   const departmentOptions = useDepartmentOptions(api);
   const clientOptions = useClientOptions(api);
@@ -2035,7 +4515,7 @@ function FailuresView({ api, isAdmin }) {
     const groups = [];
     if (isAdmin) groups.push({ key: "client", icon: Users, label: "Client", value: clientId, onChange: setClientId, options: clientOptions });
     groups.push({ key: "department", icon: Building2, label: "Department", value: department, onChange: setDepartment, options: departmentOptions });
-    groups.push({ key: "period", icon: CalendarClock, label: "Period", value: period, onChange: (v) => setPeriod(v || "week"), options: PERIOD_OPTIONS, isActive: (v) => v && v !== "week" });
+    groups.push({ key: "period", icon: CalendarClock, label: "Period", value: period, onChange: (v) => setPeriod(v || "day"), options: PERIOD_OPTIONS, isActive: (v) => v && v !== "day" });
     return groups;
   }, [isAdmin, clientId, clientOptions, department, departmentOptions, period]);
 
@@ -2066,12 +4546,45 @@ function FailuresView({ api, isAdmin }) {
 
   const maxStageCount = stageSummary.reduce((m, s) => Math.max(m, s.count), 0);
 
+  // One row per bot instead of one row per failed run.
+  const groupedByBot = useMemo(() => {
+    const map = new Map();
+    for (const row of rows) {
+      const key = row.bot_id ?? row.bot_name;
+      if (!map.has(key)) {
+        map.set(key, {
+          bot_id: row.bot_id,
+          bot_name: row.bot_name,
+          client_name: row.client_name,
+          count: 0,
+          stages: new Map(),
+          latestStart: row.start_time,
+        });
+      }
+      const g = map.get(key);
+      g.count += 1;
+      const stage = row.failure_stage || "Unknown";
+      g.stages.set(stage, (g.stages.get(stage) || 0) + 1);
+      if (row.start_time && (!g.latestStart || new Date(row.start_time) > new Date(g.latestStart))) {
+        g.latestStart = row.start_time;
+      }
+    }
+    return Array.from(map.values())
+      .map((g) => {
+        let topStage = "Unknown";
+        let topCount = -1;
+        g.stages.forEach((c, s) => { if (c > topCount) { topCount = c; topStage = s; } });
+        return { ...g, topStage };
+      })
+      .sort((a, b) => b.count - a.count);
+  }, [rows]);
+
   return (
     <div>
       <ErrorBanner message={error} onDismiss={() => setError("")} />
       <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", marginBottom: 16, flexWrap: "wrap", gap: 10 }}>
         <div style={{ color: "var(--text-muted)", fontSize: 13.5, paddingTop: 8 }}>
-          {rows.length} failed run{rows.length === 1 ? "" : "s"} — click a row for the full error message
+          {rows.length} failed run{rows.length === 1 ? "" : "s"} across {groupedByBot.length} bot{groupedByBot.length === 1 ? "" : "s"} — click a row for details
         </div>
         <div>
           <FilterPopover groups={filterGroups} />
@@ -2101,7 +4614,7 @@ function FailuresView({ api, isAdmin }) {
         )}
       </div>
 
-      {/* Full failed-run list */}
+      {/* Failed runs grouped by bot */}
       <div style={{ background: "var(--surface)", border: "1px solid var(--border)", borderRadius: 14, overflow: "hidden" }}>
         <div className="hb-scroll" style={{ overflowX: "auto" }}>
           <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 13.5 }}>
@@ -2109,102 +4622,122 @@ function FailuresView({ api, isAdmin }) {
               <tr style={{ borderBottom: "1px solid var(--border)" }}>
                 <th style={{ textAlign: "left", padding: "11px 16px", color: "var(--text-muted)", fontWeight: 500, fontSize: 12 }}>Bot</th>
                 {isAdmin && <th style={{ textAlign: "left", padding: "11px 16px", color: "var(--text-muted)", fontWeight: 500, fontSize: 12 }}>Client</th>}
-                <th style={{ textAlign: "left", padding: "11px 16px", color: "var(--text-muted)", fontWeight: 500, fontSize: 12 }}>Stage</th>
-                <th style={{ textAlign: "left", padding: "11px 16px", color: "var(--text-muted)", fontWeight: 500, fontSize: 12 }}>Error</th>
-                <th style={{ textAlign: "right", padding: "11px 16px", color: "var(--text-muted)", fontWeight: 500, fontSize: 12 }}>When</th>
+                <th style={{ textAlign: "right", padding: "11px 16px", color: "var(--danger)", fontWeight: 500, fontSize: 12 }}>Failures</th>
+                <th style={{ textAlign: "left", padding: "11px 16px", color: "var(--text-muted)", fontWeight: 500, fontSize: 12 }}>Top stage</th>
+                <th style={{ textAlign: "right", padding: "11px 16px", color: "var(--text-muted)", fontWeight: 500, fontSize: 12 }}>Latest</th>
+                <th style={{ textAlign: "right", padding: "11px 16px", color: "var(--text-muted)", fontWeight: 500, fontSize: 12 }}>Action</th>
               </tr>
             </thead>
             <tbody>
               {loading && (
-                <tr><td colSpan={isAdmin ? 5 : 4} style={{ padding: 24, textAlign: "center", color: "var(--text-dim)" }}>Loading…</td></tr>
+                <tr><td colSpan={isAdmin ? 6 : 5} style={{ padding: 24, textAlign: "center", color: "var(--text-dim)" }}>Loading…</td></tr>
               )}
-              {!loading && rows.length === 0 && (
-                <tr><td colSpan={isAdmin ? 5 : 4} style={{ padding: 24, textAlign: "center", color: "var(--text-dim)" }}>No failed runs in this window.</td></tr>
+              {!loading && groupedByBot.length === 0 && (
+                <tr><td colSpan={isAdmin ? 6 : 5} style={{ padding: 24, textAlign: "center", color: "var(--text-dim)" }}>No failed runs in this window.</td></tr>
               )}
-              {rows.map((r) => {
-                const isExpanded = expandedRow === r.run_id;
-                return (
-                  <React.Fragment key={r.run_id}>
-                    <tr
-                      className="hb-row-hover"
-                      onClick={() => setExpandedRow(isExpanded ? null : r.run_id)}
-                      style={{ borderBottom: isExpanded ? "none" : "1px solid var(--border)", cursor: "pointer" }}
-                    >
-                      <td style={{ padding: "11px 16px", fontWeight: 500 }}>{r.bot_name}</td>
-                      {isAdmin && <td style={{ padding: "11px 16px", color: "var(--text-muted)" }}>{r.client_name}</td>}
-                      <td style={{ padding: "11px 16px" }}>
-                        <Badge tone="danger">{r.failure_stage || "Unknown"}</Badge>
-                      </td>
-                      <td style={{
-                        padding: "11px 16px", color: "var(--text-muted)", maxWidth: 320,
-                        overflow: "hidden", textOverflow: "ellipsis", whiteSpace: isExpanded ? "normal" : "nowrap",
-                      }}>
-                        {r.error_message || "—"}
-                      </td>
-                      <td style={{ padding: "11px 16px", textAlign: "right", fontFamily: "var(--font-mono)", fontSize: 12, color: "var(--text-dim)" }}>
-                        {timeAgo(r.start_time)}
-                      </td>
-                    </tr>
-                    {isExpanded && (
-                      <tr style={{ borderBottom: "1px solid var(--border)" }}>
-                        <td colSpan={isAdmin ? 5 : 4} style={{ padding: "0 16px 14px" }}>
-                          <div style={{
-                            background: "var(--surface-2)", border: "1px solid var(--border)", borderRadius: 8,
-                            padding: "10px 12px", fontFamily: "var(--font-mono)", fontSize: 12, color: "var(--text-muted)",
-                          }}>
-                            {r.error_message || "No error message was captured for this run."}
-                          </div>
-                        </td>
-                      </tr>
-                    )}
-                  </React.Fragment>
-                );
-              })}
+              {groupedByBot.map((bot) => (
+                <tr
+                  key={bot.bot_id ?? bot.bot_name}
+                  className="hb-row-hover"
+                  onClick={() => setSelectedBot(bot)}
+                  style={{ borderBottom: "1px solid var(--border)", cursor: "pointer" }}
+                >
+                  <td style={{ padding: "11px 16px", fontWeight: 500 }}>{bot.bot_name}</td>
+                  {isAdmin && <td style={{ padding: "11px 16px", color: "var(--text-muted)" }}>{bot.client_name}</td>}
+                  <td style={{ padding: "11px 16px", textAlign: "right", fontFamily: "var(--font-mono)", color: "var(--danger)" }}>{bot.count}</td>
+                  <td style={{ padding: "11px 16px" }}><Badge tone="danger">{bot.topStage}</Badge></td>
+                  <td style={{ padding: "11px 16px", textAlign: "right", fontFamily: "var(--font-mono)", fontSize: 12, color: "var(--text-dim)" }}>{timeAgo(bot.latestStart)}</td>
+                  <td style={{ padding: "11px 16px", textAlign: "right" }}>
+                    <Button variant="ghost" onClick={(e) => { e.stopPropagation(); setSelectedBot(bot); }}>
+                      <AlertOctagon size={13} /> View failures
+                    </Button>
+                  </td>
+                </tr>
+              ))}
             </tbody>
           </table>
         </div>
       </div>
+
+      {selectedBot && (
+        <BotFailuresModal bot={selectedBot} rows={rows} onClose={() => setSelectedBot(null)} />
+      )}
     </div>
   );
 }
-
 /* ------------------------------------------------------------------ */
 /* Analytics — weekly/monthly leaderboards: top clients, top bots.     */
 /* Ranked primarily by run count; success rate shown alongside.        */
 /* ------------------------------------------------------------------ */
+/* ------------------------------------------------------------------ */
+/* Analytics — ranking chart tooltip                                  */
+/* ------------------------------------------------------------------ */
+
 function RankingTooltip({ active, payload }) {
-  if (!active || !payload || !payload.length) return null;
+  if (!active || !payload || !payload.length) {
+    return null;
+  }
+
   const d = payload[0].payload;
+
   return (
-    <div style={{
-      background: "var(--surface-3)", border: "1px solid var(--border)",
-      borderRadius: 8, padding: "9px 12px", fontSize: 12.5,
-    }}>
-      <div style={{ color: "var(--text)", fontWeight: 600, marginBottom: 3 }}>{d.name}</div>
-      <div style={{ color: "var(--text-muted)" }}>{d.runs} runs</div>
-      <div style={{
-        color: d.rate >= 90 ? "var(--success)" : d.rate >= 60 ? "var(--warning)" : "var(--danger)", fontWeight: 600,
-      }}>
+    <div
+      style={{
+        background: "var(--surface-3)",
+        border: "1px solid var(--border)",
+        borderRadius: 8,
+        padding: "9px 12px",
+        fontSize: 12.5,
+      }}
+    >
+      <div
+        style={{
+          color: "var(--text)",
+          fontWeight: 600,
+          marginBottom: 3,
+        }}
+      >
+        {d.name}
+      </div>
+
+      <div
+        style={{
+          color: "var(--text-muted)",
+        }}
+      >
+        {d.runs} runs
+      </div>
+
+      <div
+        style={{
+          color:
+            d.rate >= 90
+              ? "var(--success)"
+              : d.rate >= 60
+                ? "var(--warning)"
+                : "var(--danger)",
+          fontWeight: 600,
+        }}
+      >
         {d.rate}% success
       </div>
     </div>
   );
 }
-
-/* Real animated horizontal bar chart — bar length is run volume,
-   bar colour is success rate, so rank and health read at a glance. */
 function RankingChart({ title, icon: Icon, rows, nameKey, subKey, loading }) {
-  const data = rows.slice(0, 8).map((r) => ({
+  const isClientRanking = title.toLowerCase().includes("client");
+  const clientBarColors = ["#3B82F6", "#8B5CF6", "#06B6D4", "#22C55E", "#F97316", "#EC4899", "#14B8A6", "#6366F1"];
+  const data = rows.map((r) => ({
     name: r[nameKey], sub: subKey ? r[subKey] : undefined, runs: r.total_runs || 0, rate: r.success_rate ?? 0,
   }));
-  const chartHeight = Math.max(220, data.length * 46);
+  const chartHeight = Math.max(220, data.length * 40);
   return (
-    <div style={{ background: "var(--surface)", border: "1px solid var(--border)", borderRadius: 14, overflow: "hidden" }}>
+    <div className={`hb-ranking-card ${isClientRanking ? "is-client-ranking" : "is-bot-ranking"}`} style={{ background: "var(--surface)", border: "1px solid var(--border)", borderRadius: 14, overflow: "hidden" }}>
       <div style={{ padding: "14px 18px", borderBottom: "1px solid var(--border)", display: "flex", alignItems: "center", gap: 8 }}>
         <Icon size={15} color="var(--accent)" />
         <div style={{ fontFamily: "var(--font-display)", fontWeight: 600, fontSize: 14.5 }}>{title}</div>
       </div>
-      <div style={{ padding: "18px 18px 6px" }}>
+      <div style={{ padding: "18px 18px 6px", maxHeight: 480, overflowY: "auto" }} className="hb-scroll">
         {loading ? (
           <div style={{ height: 220, display: "flex", alignItems: "center", justifyContent: "center", color: "var(--text-dim)", fontSize: 13 }}>Loading…</div>
         ) : data.length === 0 ? (
@@ -2218,249 +4751,22 @@ function RankingChart({ title, icon: Icon, rows, nameKey, subKey, loading }) {
               <Tooltip content={<RankingTooltip />} cursor={{ fill: "var(--surface-2)" }} />
               <Bar dataKey="runs" name="Runs" radius={[0, 6, 6, 0]} isAnimationActive animationDuration={700}>
                 {data.map((d, i) => (
-                  <Cell key={i} fill={d.rate >= 90 ? CHART_COLORS.success : d.rate >= 60 ? CHART_COLORS.warning : CHART_COLORS.danger} />
+                  <Cell key={i} fill={isClientRanking ? clientBarColors[i % clientBarColors.length] : (d.rate >= 90 ? CHART_COLORS.success : d.rate >= 60 ? CHART_COLORS.warning : CHART_COLORS.danger)} />
                 ))}
               </Bar>
             </BarChart>
           </ResponsiveContainer>
         )}
       </div>
-      {!loading && data.length > 0 && (
+      {!loading && data.length > 0 && !isClientRanking && (
         <div style={{ display: "flex", gap: 16, padding: "4px 18px 16px", fontSize: 11, color: "var(--text-dim)" }}>
           <span style={{ display: "flex", alignItems: "center", gap: 5 }}><span style={{ width: 8, height: 8, borderRadius: 2, background: CHART_COLORS.success, display: "inline-block" }} /> ≥90% success</span>
           <span style={{ display: "flex", alignItems: "center", gap: 5 }}><span style={{ width: 8, height: 8, borderRadius: 2, background: CHART_COLORS.warning, display: "inline-block" }} /> 60–89%</span>
           <span style={{ display: "flex", alignItems: "center", gap: 5 }}><span style={{ width: 8, height: 8, borderRadius: 2, background: CHART_COLORS.danger, display: "inline-block" }} /> &lt;60%</span>
         </div>
       )}
-    </div>
-  );
-}
-
-function AnalyticsView({ api, isAdmin }) {
-  const [topClients, setTopClients] = useState([]);
-  const [topBots, setTopBots] = useState([]);
-  const [department, setDepartment] = useState(null);
-  const [period, setPeriod] = useState("week");
-  const [loading, setLoading] = useState(true);
-  const [error, setError] = useState("");
-
-  const departmentOptions = useDepartmentOptions(api);
-  const filterGroups = useMemo(() => [
-    { key: "department", icon: Building2, label: "Department", value: department, onChange: setDepartment, options: departmentOptions },
-    { key: "period", icon: CalendarClock, label: "Period", value: period, onChange: (v) => setPeriod(v || "week"), options: PERIOD_OPTIONS, isActive: (v) => v && v !== "week" },
-  ], [department, departmentOptions, period]);
-
-  useEffect(() => {
-    (async () => {
-      setLoading(true);
-      setError("");
-      try {
-        const params = new URLSearchParams();
-        if (department) params.set("department", department);
-        if (period && period !== "all") params.set("period", period);
-        const qs = params.toString();
-        const suffix = qs ? `?${qs}` : "";
-        const calls = [api(`/dashboard/top-bots${suffix}`)];
-        if (isAdmin) calls.unshift(api(`/dashboard/top-clients${suffix}`));
-        const results = await Promise.all(calls);
-        if (isAdmin) {
-          setTopClients(results[0] || []);
-          setTopBots(results[1] || []);
-        } else {
-          setTopClients([]);
-          setTopBots(results[0] || []);
-        }
-      } catch (err) {
-        setError(err.message);
-      } finally {
-        setLoading(false);
-      }
-    })();
-  }, [api, department, period, isAdmin]);
-
-  return (
-    <div>
-      <ErrorBanner message={error} onDismiss={() => setError("")} />
-      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", marginBottom: 16, flexWrap: "wrap", gap: 10 }}>
-        <div style={{ color: "var(--text-muted)", fontSize: 13.5, paddingTop: 8 }}>
-          Ranked by run count, success rate shown alongside
-        </div>
-        <div>
-          <FilterPopover groups={filterGroups} />
-          <ActiveFilterChips groups={filterGroups} />
-        </div>
-      </div>
-
-      <div style={{ display: "grid", gridTemplateColumns: isAdmin ? "1fr 1fr" : "1fr", gap: 16 }}>
-        {isAdmin && (
-          <RankingChart title="Top clients" icon={TrendingUp} rows={topClients} nameKey="client_name" loading={loading} />
-        )}
-        <RankingChart title="Top bots" icon={Bot} rows={topBots} nameKey="bot_name" subKey={isAdmin ? "client_name" : undefined} loading={loading} />
-      </div>
-    </div>
-  );
-}
-
-/* ------------------------------------------------------------------ */
-/* Users — admin-only account management: view every login, unlock a   */
-/* locked-out account, or force a password reset. Uses /auth/users,    */
-/* /auth/users/{id}/unlock, /auth/users/{id}/reset-password.           */
-/* ------------------------------------------------------------------ */
-function ResetPasswordModal({ api, user, onClose, onDone }) {
-  const [password, setPassword] = useState("");
-  const [error, setError] = useState("");
-  const [loading, setLoading] = useState(false);
-
-  const submit = async (e) => {
-    e.preventDefault();
-    setError("");
-    setLoading(true);
-    try {
-      await api(`/auth/users/${user.user_id}/reset-password`, {
-        method: "POST",
-        body: JSON.stringify({ new_password: password }),
-      });
-      onDone();
-    } catch (err) {
-      setError(err.message);
-    } finally {
-      setLoading(false);
-    }
-  };
-
-  return (
-    <Modal title={`Reset password — ${user.email}`} onClose={onClose} width={400}>
-      <form onSubmit={submit}>
-        <ErrorBanner message={error} onDismiss={() => setError("")} />
-        <div style={{ fontSize: 13, color: "var(--text-muted)", marginBottom: 16 }}>
-          This immediately signs the user out everywhere — they'll need the new password on their next login.
-        </div>
-        <Field label="New password">
-          <PasswordField
-            value={password}
-            onChange={(e) => setPassword(e.target.value)}
-            required
-            minLength={6}
-            autoComplete="new-password"
-          />
-        </Field>
-        <div style={{ display: "flex", gap: 10, justifyContent: "flex-end", marginTop: 6 }}>
-          <Button variant="ghost" onClick={onClose} type="button">Cancel</Button>
-          <Button type="submit" disabled={loading}>{loading ? "Resetting…" : "Reset password"}</Button>
-        </div>
-      </form>
-    </Modal>
-  );
-}
-
-function UsersView({ api }) {
-  const [users, setUsers] = useState([]);
-  const [loading, setLoading] = useState(true);
-  const [error, setError] = useState("");
-  const [resetTarget, setResetTarget] = useState(null);
-
-  const load = useCallback(async () => {
-    setLoading(true);
-    setError("");
-    try {
-      const res = await api("/auth/users");
-      setUsers(res?.data || []);
-    } catch (err) {
-      setError(err.message);
-    } finally {
-      setLoading(false);
-    }
-  }, [api]);
-
-  useEffect(() => { load(); }, [load]);
-
-  const unlock = async (u) => {
-    setError("");
-    try {
-      await api(`/auth/users/${u.user_id}/unlock`, { method: "POST" });
-      load();
-    } catch (err) {
-      setError(err.message);
-    }
-  };
-
-  const isLocked = (u) => u.locked_until && new Date(u.locked_until).getTime() > Date.now();
-
-  return (
-    <div>
-      <ErrorBanner message={error} onDismiss={() => setError("")} />
-      <div style={{ color: "var(--text-muted)", fontSize: 13, marginBottom: 16 }}>
-        {users.length} login{users.length === 1 ? "" : "s"} — unlock accounts or force a password reset
-      </div>
-
-      <div style={{ background: "var(--surface)", border: "1px solid var(--border)", borderRadius: 14, overflow: "hidden" }}>
-        <div className="hb-scroll" style={{ overflowX: "auto" }}>
-          <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 13.5 }}>
-            <thead>
-              <tr style={{ borderBottom: "1px solid var(--border)" }}>
-                <th style={{ textAlign: "left", padding: "11px 16px", color: "var(--text-muted)", fontWeight: 500, fontSize: 12 }}>Email</th>
-                <th style={{ textAlign: "left", padding: "11px 16px", color: "var(--text-muted)", fontWeight: 500, fontSize: 12 }}>Role</th>
-                <th style={{ textAlign: "left", padding: "11px 16px", color: "var(--text-muted)", fontWeight: 500, fontSize: 12 }}>Status</th>
-                <th style={{ textAlign: "left", padding: "11px 16px", color: "var(--text-muted)", fontWeight: 500, fontSize: 12 }}>Login status</th>
-                <th style={{ padding: "11px 16px" }}></th>
-              </tr>
-            </thead>
-            <tbody>
-              {loading && (
-                <tr><td colSpan={5} style={{ padding: 24, textAlign: "center", color: "var(--text-dim)" }}>Loading…</td></tr>
-              )}
-              {!loading && users.length === 0 && (
-                <tr><td colSpan={5} style={{ padding: 24, textAlign: "center", color: "var(--text-dim)" }}>No logins yet.</td></tr>
-              )}
-              {users.map((u) => {
-                const locked = isLocked(u);
-                return (
-                  <tr key={u.user_id} className="hb-row-hover" style={{ borderBottom: "1px solid var(--border)" }}>
-                    <td style={{ padding: "11px 16px", fontWeight: 500 }}>{u.email}</td>
-                    <td style={{ padding: "11px 16px" }}><Badge tone="accent">{u.role}</Badge></td>
-                    <td style={{ padding: "11px 16px" }}>
-                      <Badge tone={u.status === "Active" ? "success" : "muted"}>{u.status}</Badge>
-                    </td>
-                    <td style={{ padding: "11px 16px" }}>
-                      {locked ? (
-                        <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
-                          <ShieldAlert size={13} color="var(--danger)" />
-                          <span style={{ color: "var(--danger)", fontSize: 12.5 }}>
-                            Locked until {new Date(u.locked_until).toLocaleTimeString(undefined, { hour: "2-digit", minute: "2-digit" })}
-                          </span>
-                        </div>
-                      ) : u.failed_login_attempts > 0 ? (
-                        <span style={{ color: "var(--warning)", fontSize: 12.5 }}>
-                          {u.failed_login_attempts} failed attempt{u.failed_login_attempts === 1 ? "" : "s"}
-                        </span>
-                      ) : (
-                        <span style={{ color: "var(--text-dim)", fontSize: 12.5 }}>—</span>
-                      )}
-                    </td>
-                    <td style={{ padding: "11px 16px", textAlign: "right", whiteSpace: "nowrap" }}>
-                      {locked && (
-                        <button onClick={() => unlock(u)} title="Unlock account" style={{ background: "none", border: "none", color: "var(--accent)", padding: 4 }}>
-                          <Unlock size={14} />
-                        </button>
-                      )}
-                      <button onClick={() => setResetTarget(u)} title="Reset password" style={{ background: "none", border: "none", color: "var(--text-muted)", padding: 4 }}>
-                        <RotateCcw size={14} />
-                      </button>
-                    </td>
-                  </tr>
-                );
-              })}
-            </tbody>
-          </table>
-        </div>
-      </div>
-
-      {resetTarget && (
-        <ResetPasswordModal
-          api={api} user={resetTarget}
-          onClose={() => setResetTarget(null)}
-          onDone={() => { setResetTarget(null); load(); }}
-        />
+      {!loading && data.length > 0 && isClientRanking && (
+        <div style={{ padding: "4px 18px 16px", fontSize: 11, color: "var(--text-dim)" }}>Ranked by run volume</div>
       )}
     </div>
   );
@@ -2561,7 +4867,7 @@ function AccountView({ api, session }) {
 /* ------------------------------------------------------------------ */
 /* Generic CRUD table view (Clients / Bots / Departments)               */
 /* ------------------------------------------------------------------ */
-function CrudView({ api, canWrite, config }) {
+function CrudView({ api, canWrite, config, initialClientFilter = null, rowContext = null }) {
   const [rows, setRows] = useState([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
@@ -2570,7 +4876,7 @@ function CrudView({ api, canWrite, config }) {
   const [hardDelete, setHardDelete] = useState(false);
   const [loginModalFor, setLoginModalFor] = useState(null);
   const [refs, setRefs] = useState({}); // supporting lookups (e.g. clients for bots)
-  const [clientFilterId, setClientFilterId] = useState(null);
+  const [clientFilterId, setClientFilterId] = useState(initialClientFilter);
   const [department, setDepartment] = useState(null);
   const [machine, setMachine] = useState(null);
   const [search, setSearch] = useState("");
@@ -2715,7 +5021,7 @@ function CrudView({ api, canWrite, config }) {
                 <tr key={row[config.idField]} className="hb-row-hover" style={{ borderBottom: "1px solid var(--border)" }}>
                   {config.columns.map((c) => (
                     <td key={c.key} style={{ padding: "11px 16px", verticalAlign: "middle" }}>
-                      {c.render ? c.render(row, refs) : row[c.key] ?? "—"}
+                      {c.render ? c.render(row, rowContext ? { ...refs, ...rowContext } : refs) : row[c.key] ?? "—"}
                     </td>
                   ))}
                   {canWrite && (
@@ -2895,6 +5201,152 @@ function FormModal({ title, fields, initial, refs, onCancel, onSave }) {
 /* ------------------------------------------------------------------ */
 /* Entity configs                                                       */
 /* ------------------------------------------------------------------ */
+function getTimezoneMeta(timezone) {
+  if (!timezone) return null;
+  try {
+    const now = new Date();
+    const zoneName = new Intl.DateTimeFormat("en-US", {
+      timeZone: timezone,
+      timeZoneName: "short",
+    }).formatToParts(now).find((p) => p.type === "timeZoneName")?.value || timezone;
+
+    // Compare the selected timezone with the browser/local timezone.
+    const getParts = (tz) => {
+      const parts = new Intl.DateTimeFormat("en-US", {
+        timeZone: tz,
+        year: "numeric", month: "2-digit", day: "2-digit",
+        hour: "2-digit", minute: "2-digit", second: "2-digit",
+        hourCycle: "h23",
+      }).formatToParts(now);
+      const map = {};
+      parts.forEach((p) => { map[p.type] = Number(p.value); });
+      return Date.UTC(map.year, map.month - 1, map.day, map.hour, map.minute, map.second);
+    };
+
+    // HeartBeat uses StayAhead (Asia/Kolkata) as the reference clock.
+    // Do not compare against the machine/browser timezone.
+    const stayAheadOffsetMs = getParts("Asia/Kolkata") - getParts("UTC");
+    const zoneOffsetMs = getParts(timezone) - getParts("UTC");
+    const diffMinutes = Math.round((zoneOffsetMs - stayAheadOffsetMs) / 60000);
+
+    let relation = "same time";
+    if (diffMinutes !== 0) {
+      const abs = Math.abs(diffMinutes);
+      const hours = Math.floor(abs / 60);
+      const minutes = abs % 60;
+      const duration = `${hours}h${minutes ? ` ${minutes}m` : ""}`;
+      relation = diffMinutes > 0 ? `${duration} ahead` : `${duration} behind`;
+    }
+
+    return { zoneName, relation };
+  } catch (_) {
+    return { zoneName: timezone, relation: "" };
+  }
+}
+
+function ClientTimezoneCell({ timezone }) {
+  const meta = getTimezoneMeta(timezone);
+  const [now, setNow] = useState(() => new Date());
+
+  useEffect(() => {
+    if (!timezone) return undefined;
+    const timer = setInterval(() => setNow(new Date()), 1000);
+    return () => clearInterval(timer);
+  }, [timezone]);
+
+  if (!meta) return <span style={{ color: "var(--text-dim)" }}>—</span>;
+
+  const clientTime = new Intl.DateTimeFormat("en-US", {
+    timeZone: timezone,
+    hour: "2-digit",
+    minute: "2-digit",
+    second: "2-digit",
+    hour12: true,
+  }).format(now);
+
+  return (
+    <div className="hb-client-tz" title={timezone}>
+      <div className="hb-client-tz-top">
+        <span className="hb-client-tz-zone">{meta.zoneName}</span>
+        <span className="hb-client-tz-live">●</span>
+      </div>
+      {/* <span className="hb-client-tz-time"></span>  */}
+      <span className="hb-client-tz-diff">
+        {meta.relation}
+      </span>
+    </div>
+  );
+}
+
+function TimezoneClock({ label, timezone }) {
+  const [now, setNow] = useState(new Date());
+
+  useEffect(() => {
+    const timer = setInterval(() => setNow(new Date()), 1000);
+    return () => clearInterval(timer);
+  }, []);
+
+  const time = new Intl.DateTimeFormat("en-US", {
+    timeZone: timezone,
+    hour: "2-digit",
+    minute: "2-digit",
+    second: "2-digit",
+    hour12: true,
+    timeZoneName: "short",
+  }).format(now);
+
+  return (
+    <div>
+      <div>{label}</div>
+      <div>{time}</div>
+    </div>
+  );
+}
+
+function StayAheadClocks({ isDrawer = false }) {
+  const [now, setNow] = useState(new Date());
+
+  useEffect(() => {
+    const timer = setInterval(() => {
+      setNow(new Date());
+    }, 1000);
+
+    return () => clearInterval(timer);
+  }, []);
+
+  const stayAheadUSTime = new Intl.DateTimeFormat("en-US", {
+    timeZone: "America/Los_Angeles",
+    hour: "2-digit",
+    minute: "2-digit",
+    second: isDrawer ? undefined : "2-digit",
+    hour12: true,
+  }).format(now);
+
+  const stayAheadIndiaTime = new Intl.DateTimeFormat("en-US", {
+    timeZone: "Asia/Kolkata",
+    hour: "2-digit",
+    minute: "2-digit",
+    second: isDrawer ? undefined : "2-digit",
+    hour12: true,
+  }).format(now);
+
+  return (
+    <div className={`hb-topbar-clocks${isDrawer ? " hb-drawer-clocks" : ""}`}>
+      <div className="hb-topbar-clock-item">
+        <div className="hb-topbar-clock-label">StayAhead US</div>
+        <div className="hb-topbar-clock-time">{stayAheadUSTime}</div>
+      </div>
+
+      <div className="hb-topbar-clock-divider" />
+
+      <div className="hb-topbar-clock-item">
+        <div className="hb-topbar-clock-label">StayAhead India</div>
+        <div className="hb-topbar-clock-time">{stayAheadIndiaTime}</div>
+      </div>
+    </div>
+  );
+}
+
 const clientConfig = {
   label: "Clients", singular: "Client", idField: "client_id", listPath: "/clients/",
   supportsSoftDelete: true,
@@ -2903,20 +5355,128 @@ const clientConfig = {
   searchPlaceholder: "Search clients…",
   columns: [
     { key: "client_name", label: "Name" },
+
     { key: "contact_person", label: "Contact" },
+
     { key: "email", label: "Email" },
-    { key: "email_domains", label: "Email domains", render: (r) => r.email_domains || "—" },
-    { key: "status", label: "Status", render: (r) => <Badge tone={r.status === "Active" ? "success" : "muted"}>{r.status}</Badge> },
+
+    {
+      key: "email_domains",
+      label: "Email domains",
+      render: (r) => r.email_domains || "—",
+    },
+
+    {
+      key: "bot_count",
+      label: "Bot Count",
+      render: (r, refs) => (
+        <button
+          type="button"
+          onClick={() => refs?.onBotCountClick && refs.onBotCountClick(r.client_id)}
+          style={{
+            display: "inline-flex",
+            alignItems: "center",
+            gap: 6,
+            minWidth: 42,
+            justifyContent: "center",
+            padding: "5px 9px",
+            borderRadius: 8,
+            background: "var(--surface-2)",
+            border: "1px solid var(--border)",
+            color: "var(--accent)",
+            fontFamily: "var(--font-mono)",
+            fontSize: 14,
+            fontWeight: 900,
+            cursor: refs?.onBotCountClick ? "pointer" : "default",
+          }}
+          title={`View bots for this client (${r.bot_count ?? 0})`}
+        >
+          <Bot size={13} />
+          <span>{r.bot_count ?? 0}</span>
+        </button>
+      ),
+    },
+
+    {
+      key: "status",
+      label: "Status",
+      render: (r) => (
+        <Badge tone={r.status === "Active" ? "success" : "muted"}>
+          {r.status}
+        </Badge>
+      ),
+    },
+
+    {
+      key: "local_time",
+      label: "Local Time",
+      render: (r) => <ClientTimezoneCell timezone={r.timezone} />,
+    },
   ],
   formFields: [
-    { key: "client_name", label: "Client name", required: true },
-    { key: "contact_person", label: "Contact person" },
-    { key: "email", label: "Email", type: "email", required: true },
-    { key: "email_domains", label: "Email domains (comma-separated, e.g. domain.com,other.com)" },
-    { key: "status", label: "Status", type: "select", options: [{ value: "Active", label: "Active" }, { value: "Inactive", label: "Inactive" }] },
+    {
+      key: "client_name",
+      label: "Client name",
+      required: true,
+    },
+    {
+      key: "contact_person",
+      label: "Contact person",
+    },
+    {
+      key: "email",
+      label: "Email",
+      type: "email",
+      required: true,
+    },
+    {
+      key: "email_domains",
+      label: "Email domains (comma-separated, e.g. domain.com,other.com)",
+    },
+    {
+      key: "timezone",
+      label: "Timezone",
+      type: "select",
+      options: [
+        { value: "America/New_York", label: "Eastern Time — New York" },
+        { value: "America/Chicago", label: "Central Time — Chicago" },
+        { value: "America/Denver", label: "Mountain Time — Denver" },
+        { value: "America/Los_Angeles", label: "Pacific Time — Los Angeles" },
+        { value: "America/Phoenix", label: "Arizona — Phoenix" },
+        { value: "Europe/London", label: "UK — London" },
+        { value: "Europe/Dublin", label: "Ireland — Dublin" },
+        { value: "Asia/Kolkata", label: "India — Kolkata" },
+        { value: "Australia/Sydney", label: "Australia — Sydney" },
+      ],
+    },
+    {
+      key: "status",
+      label: "Status",
+      type: "select",
+      options: [
+        { value: "Active", label: "Active" },
+        { value: "Inactive", label: "Inactive" },
+      ],
+    },
   ],
-  emptyForm: () => ({ client_name: "", contact_person: "", email: "", email_domains: "", status: "Active" }),
-  toUpdatePayload: (f) => ({ client_name: f.client_name, contact_person: f.contact_person, email: f.email, email_domains: f.email_domains, status: f.status }),
+
+  emptyForm: () => ({
+    client_name: "",
+    contact_person: "",
+    email: "",
+    email_domains: "",
+    timezone: "America/New_York",
+    status: "Active",
+  }),
+
+  toUpdatePayload: (f) => ({
+    client_name: f.client_name,
+    contact_person: f.contact_person,
+    email: f.email,
+    email_domains: f.email_domains,
+    timezone: f.timezone,
+    status: f.status,
+  }),
 };
 
 const departmentConfig = {
@@ -2939,16 +5499,16 @@ const botConfig = {
   showClientFilter: true,
   showDepartmentFilter: true,
   showMachineFilter: true,
-  searchKeys: ["bot_name", "bot_code", "machine_name", "owner"],
+  searchKeys: ["bot_name", "email_identifier", "machine_name", "owner"],
   searchPlaceholder: "Search bots…",
   refs: [{ key: "clients", path: "/clients/" }, { key: "departments", path: "/departments/" }],
   columns: [
     { key: "bot_name", label: "Name" },
-    { key: "bot_code", label: "Code", render: (r) => <span style={{ fontFamily: "var(--font-mono)", fontSize: 12.5 }}>{r.bot_code}</span> },
+    { key: "email_identifier", label: "Email identifier", render: (r) => <span style={{ fontFamily: "var(--font-mono)", fontSize: 12.5 }}>{r.email_identifier}</span> },
     { key: "client_id", label: "Client", render: (r, refs) => refs.clients?.find((c) => c.client_id === r.client_id)?.client_name || `#${r.client_id}` },
     { key: "department", label: "Department", render: (r) => r.department ? <Badge tone="accent">{r.department}</Badge> : <span style={{ color: "var(--text-dim)" }}>—</span> },
     { key: "machine_name", label: "Machine", render: (r) => r.machine_name ? <span style={{ fontFamily: "var(--font-mono)", fontSize: 12.5, color: "var(--text-muted)" }}>{r.machine_name}</span> : <span style={{ color: "var(--text-dim)" }}>—</span> },
-    { key: "Manual  Process Rate", label: "Manual Process Rate", render: (r) => <span style={{ fontFamily: "var(--font-mono)", fontSize: 12.5, color: "var(--text-muted)" }}>{r.transaction_batch_size} acc = {r.transaction_batch_hours}h</span> },
+    { key: "manual_process_rate", label: "Manual Process Rate", render: (r) => <span style={{ fontFamily: "var(--font-mono)", fontSize: 12.5, color: "var(--text-muted)" }}>{r.transaction_batch_size} acc = {r.transaction_batch_hours}h</span> },
     { key: "status", label: "Status", render: (r) => <Badge tone={r.status === "Active" ? "success" : "muted"}>{r.status}</Badge> },
   ],
   formFields: [
@@ -2978,18 +5538,25 @@ const botConfig = {
 const NAV_ADMIN = [
   { key: "dashboard", label: "Dashboard", icon: LayoutDashboard },
   { key: "reports", label: "Bot Reports", icon: FileBarChart },
-  { key: "failures", label: "Failures", icon: AlertOctagon },
-  { key: "analytics", label: "Analytics", icon: TrendingUp },
-  { key: "clients", label: "Clients", icon: Users },
   { key: "bots", label: "Bots", icon: Bot },
+  { key: "clients", label: "Clients", icon: Users },
+
+  { key: "logs", label: "Logs", icon: FileText },
+  { key: "messages", label: "Messages", icon: MessageSquare },
+  { key: "failures", label: "Failures", icon: AlertOctagon },
+
+  { key: "client-management", label: "Credential Management", icon: Building2 },
+
   { key: "departments", label: "Departments", icon: Building2 },
+  { key: "action-items", label: "Action Items", icon: ClipboardList },
   { key: "users", label: "Users", icon: KeyRound },
+
 ];
 const NAV_CLIENT = [
   { key: "dashboard", label: "Dashboard", icon: LayoutDashboard },
+  { key: "contact", label: "Contact", icon: MessageSquare },
   { key: "reports", label: "Bot Reports", icon: FileBarChart },
   { key: "failures", label: "Failures", icon: AlertOctagon },
-  { key: "analytics", label: "Analytics", icon: TrendingUp },
   { key: "bots", label: "Bots", icon: Bot },
   { key: "account", label: "Account", icon: UserCircle2 },
 ];
@@ -3053,16 +5620,78 @@ function ProfileMenu({ email, role, onLogout, theme, toggleTheme }) {
   );
 }
 
+
+const SIDEBAR_KEY = "heartbeat_sidebar_collapsed";
+
 function AppShell({ session, onLogout, onSessionExpired, onTokensRefreshed, theme, toggleTheme }) {
   const { baseUrl, token, role, email } = session;
+  const currentUserId = useMemo(() => {
+    try {
+      if (!token) return null;
+
+      const payload = JSON.parse(
+        atob(token.split(".")[1].replace(/-/g, "+").replace(/_/g, "/"))
+      );
+
+      return payload?.sub != null ? Number(payload.sub) : null;
+    } catch (_) {
+      return null;
+    }
+  }, [token]);
   const api = useApi(baseUrl, session, onTokensRefreshed, onSessionExpired);
   const [view, setView] = useState("dashboard");
+  const [logContext, setLogContext] = useState(null);
   const [wsConnected, setWsConnected] = useState(false);
   const [liveEvents, setLiveEvents] = useState([]);
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
-  const isAdmin = role === "admin";
-  const NAV = isAdmin ? NAV_ADMIN : NAV_CLIENT;
+  const [botsClientFilter, setBotsClientFilter] = useState(null);
+  const [targetActionItem, setTargetActionItem] = useState(null);
+  const [soundOn, setSoundOn] = useState(() => isSoundEnabled());
+  const handleToggleSound = () => {
+    const next = toggleSound();
+    setSoundOn(next);
+  };
+  const [sidebarCollapsed, setSidebarCollapsed] = useState(() => {
+    try { return localStorage.getItem(SIDEBAR_KEY) === "1"; } catch (_) { return false; }
+  });
+  // Replace these 2 lines in AppShell:
+  const isSuperAdmin = role === "admin";
+  const isAnyAdmin = ["admin", "admin2", "admin3"].includes(role);
+  const isAdmin = isAnyAdmin;
 
+  const NAV_ADMIN_VIEWER = [
+    { key: "dashboard", label: "Dashboard", icon: LayoutDashboard },
+    { key: "action-items", label: "Action Items", icon: ClipboardList },
+    { key: "reports", label: "Bot Reports", icon: FileBarChart },
+    { key: "logs", label: "Logs", icon: FileText },
+    { key: "messages", label: "Messages", icon: MessageSquare },
+    { key: "failures", label: "Failures", icon: AlertOctagon },
+    { key: "clients", label: "Clients", icon: Users },
+    { key: "client-management", label: "Client Management", icon: Building2 },
+    { key: "bots", label: "Bots", icon: Bot },
+    { key: "departments", label: "Departments", icon: Building2 },
+  ];
+  const NAV = isSuperAdmin ? NAV_ADMIN : isAnyAdmin ? NAV_ADMIN_VIEWER : NAV_CLIENT;
+  const [clientTimezone, setClientTimezone] = useState(null);
+  const [unreadMessages, setUnreadMessages] = useState(0);
+
+  const toggleSidebar = useCallback(() => {
+    setSidebarCollapsed((c) => {
+      const next = !c;
+      try { localStorage.setItem(SIDEBAR_KEY, next ? "1" : "0"); } catch (_) { /* ignore */ }
+      return next;
+    });
+  }, []);
+  useEffect(() => {
+    const onKeyDown = (e) => {
+      if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === "b") {
+        e.preventDefault();
+        toggleSidebar();
+      }
+    };
+    window.addEventListener("keydown", onKeyDown);
+    return () => window.removeEventListener("keydown", onKeyDown);
+  }, [toggleSidebar]);
   useEffect(() => {
     const expiryMs = decodeJwtExpiryMs(token);
     if (!expiryMs) return;
@@ -3103,49 +5732,160 @@ function AppShell({ session, onLogout, onSessionExpired, onTokensRefreshed, them
         attempt += 1;
         retryTimer = setTimeout(connect, delay);
       };
-      ws.onerror = () => { try { ws.close(); } catch (_) {} };
+      ws.onerror = () => { try { ws.close(); } catch (_) { } };
       ws.onmessage = (e) => {
+        if (closed) return;
         try {
           const data = JSON.parse(e.data);
+          handleWebSocketSoundEvent(data, currentUserId);
+          if (data.event === "new_message") {
+            setUnreadMessages((prev) => prev + 1);
+          }
           if (data.event) setLiveEvents((prev) => [{ ...data, _receivedAt: Date.now() }, ...prev].slice(0, 50));
         } catch (_) { /* ignore heartbeat/ping frames */ }
       };
     };
-
     connect();
     return () => {
       closed = true;
       clearTimeout(retryTimer);
-      try { ws?.close(); } catch (_) {}
+      try { ws?.close(); } catch (_) { }
     };
   }, [baseUrl, token]);
 
+  useEffect(() => {
+    console.log("SESSION CLIENT ID:", session?.clientId);
+
+    if (!session?.clientId) {
+      console.log("NO CLIENT ID - USING NEW YORK");
+      setClientTimezone("America/New_York");
+      return;
+    }
+
+    let cancelled = false;
+
+    (async () => {
+      try {
+        const response = await api(`/clients/${session.clientId}`);
+
+        console.log("CLIENT RESPONSE:", response);
+
+        const client = response?.data;
+
+        console.log("MATCHED CLIENT:", client);
+        console.log("MATCHED TIMEZONE:", client?.timezone);
+
+        if (!cancelled) {
+          setClientTimezone(
+            client?.timezone || "America/New_York"
+          );
+        }
+      } catch (err) {
+        console.error("Failed to load client timezone:", err);
+
+        if (!cancelled) {
+          setClientTimezone("America/New_York");
+        }
+      }
+    })();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [api, session?.clientId]);
+
+  useEffect(() => {
+    let cancelled = false;
+    const loadUnread = async () => {
+      try {
+        const res = await api("/messages/unread-count");
+        if (!cancelled) setUnreadMessages(Number(res?.unread_count || 0));
+      } catch (_) {
+        // Messaging is non-critical to the main dashboard.
+      }
+    };
+    loadUnread();
+    const timer = setInterval(loadUnread, 15000);
+    return () => { cancelled = true; clearInterval(timer); };
+  }, [api]);
+
   const selectView = (next) => {
+    setBotsClientFilter(null); // manual nav clears any client-scoped bot filter
     setView(next);
+    if (next !== "logs") setLogContext(null);
     setMobileMenuOpen(false);
     window.scrollTo({ top: 0, behavior: "smooth" });
   };
+
+  const openLogsFromRun = useCallback((context) => {
+    setLogContext(context || null);
+    setView("logs");
+    setMobileMenuOpen(false);
+    window.scrollTo({ top: 0, behavior: "smooth" });
+  }, []);
+
+  const openBotsForClient = useCallback((clientId) => {
+    setBotsClientFilter(clientId);
+    setView("bots");
+    setLogContext(null);
+    setMobileMenuOpen(false);
+    window.scrollTo({ top: 0, behavior: "smooth" });
+  }, []);
+
+  const handleOpenActionItems = useCallback((actionItemId) => {
+    if (actionItemId) {
+      setTargetActionItem({ id: actionItemId, ts: Date.now() });
+    }
+    setBotsClientFilter(null);
+    setView("action-items");
+    setLogContext(null);
+    setMobileMenuOpen(false);
+    window.scrollTo({ top: 0, behavior: "smooth" });
+  }, []);
 
   return (
     <div className="hb-root hb-app-shell" data-theme={theme}>
       {/* <style>{TOKENS}</style> */}
 
-      <aside className="hb-sidebar">
+      {/* Mobile Drawer Backdrop Overlay */}
+      {mobileMenuOpen && (
+        <div
+          className="hb-sidebar-backdrop"
+          onClick={() => setMobileMenuOpen(false)}
+          aria-hidden="true"
+        />
+      )}
+
+      <aside className={`hb-sidebar${sidebarCollapsed ? " is-collapsed" : ""}${mobileMenuOpen ? " mobile-open" : ""}`}>
         <div className="hb-brand">
           <div className="hb-brand-mark">
-  <img
-    src="./public/logo2.png"
-    alt="HeartBeat"
-    className="hb-brand-logo"
-  />
-</div>
-          <div className="hb-brand-copy" style={{ minWidth: 0 }}>
+            <img src="/logo2.png" alt="HeartBeat" className="hb-brand-logo" />
+          </div>
+          <div className="hb-brand-copy" style={{ minWidth: 0, flex: 1 }}>
             <div style={{ font: "800 16px/1.1 var(--font-display)", letterSpacing: "-.1px" }}>HeartBeat</div>
             <div style={{ marginTop: 3, color: "var(--text-dim)", fontSize: 10.5, letterSpacing: ".35px" }}>Bot Monitor Dashboard</div>
           </div>
+          <button
+            type="button"
+            className="hb-sidebar-mobile-close"
+            onClick={() => setMobileMenuOpen(false)}
+            aria-label="Close navigation"
+          >
+            <X size={18} />
+          </button>
         </div>
 
+        <button
+          className="hb-sidebar-collapse-btn"
+          onClick={toggleSidebar}
+          title={sidebarCollapsed ? "Expand sidebar (Ctrl+B)" : "Collapse sidebar (Ctrl+B)"}
+          aria-label="Toggle sidebar"
+        >
+          {sidebarCollapsed ? <ChevronsRight size={13} /> : <ChevronsLeft size={13} />}
+        </button>
+
         <nav className="hb-sidebar-nav hb-scroll">
+
           <div className="hb-nav-section hb-eyebrow">Workspace</div>
           {NAV.map((n) => {
             const Icon = n.icon;
@@ -3154,6 +5894,11 @@ function AppShell({ session, onLogout, onSessionExpired, onTokensRefreshed, them
               <button key={n.key} className={`hb-nav-item${active ? " active" : ""}`} onClick={() => selectView(n.key)} title={n.label}>
                 <span className="hb-nav-icon"><Icon size={15} /></span>
                 <span className="hb-nav-label" style={{ flex: 1 }}>{n.label}</span>
+                {(n.key === "contact" || n.key === "messages") && unreadMessages > 0 && (
+                  <span className="hb-chat-badge-pill">
+                    {unreadMessages > 99 ? "99+" : unreadMessages}
+                  </span>
+                )}
                 {active && <span style={{ width: 5, height: 5, borderRadius: "50%", background: "var(--accent)", boxShadow: "0 0 0 4px var(--accent-dim)" }} />}
               </button>
             );
@@ -3161,24 +5906,65 @@ function AppShell({ session, onLogout, onSessionExpired, onTokensRefreshed, them
         </nav>
 
         <div className="hb-sidebar-footer">
+          <div className="hb-sidebar-drawer-clocks">
+            {isAdmin ? <StayAheadClocks isDrawer /> : <ClientTimezoneClocks timezone={clientTimezone} isDrawer />}
+          </div>
           <ProfileMenu email={email} role={role} onLogout={onLogout} theme={theme} toggleTheme={toggleTheme} />
         </div>
       </aside>
 
       <div className="hb-shell-main">
-        
+
         <header className="hb-topbar">
           <div className="hb-topbar-left">
             <button className="hb-mobile-toggle" onClick={() => setMobileMenuOpen((v) => !v)} aria-label="Open navigation">
               {mobileMenuOpen ? <X size={17} /> : <LayoutDashboard size={17} />}
             </button>
+
+
             <div>
-              <div className="hb-page-title">{view.replace("-", " ")}</div>
-              <div className="hb-page-meta">{new Date().toLocaleDateString(undefined, { weekday: "long", month: "long", day: "numeric", year: "numeric" })}</div>
+              {view !== "dashboard" && <div className="hb-page-title">{view.replace("-", " ")}</div>}
+              <div className={view === "dashboard" ? "hb-page-meta-solo" : "hb-page-meta"}>
+                {new Date().toLocaleDateString(undefined, {
+                  weekday: "long",
+                  month: "long",
+                  day: "numeric",
+                  year: "numeric"
+                })}
+
+              </div>
+
             </div>
           </div>
+          {isAdmin ? (
+            <StayAheadClocks />
+          ) : (
+            <ClientTimezoneClocks timezone={clientTimezone} />
+          )}
+
 
           <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
+            {isAdmin && (
+              <Notifications
+                api={api}
+                onOpenActionItems={handleOpenActionItems}
+                liveEvents={liveEvents}
+              />
+            )}
+            <button
+              onClick={handleToggleSound}
+              title={soundOn ? "Mute notification sounds" : "Enable notification sounds"}
+              aria-label="Toggle notification sounds"
+              style={{
+                display: "grid", placeItems: "center", width: 36, height: 36,
+                border: "1px solid var(--border)", background: "var(--surface)",
+                color: soundOn ? "var(--accent)" : "var(--text-dim)", borderRadius: 10, transition: "border-color .15s, color .15s",
+              }}
+              onMouseEnter={(e) => { e.currentTarget.style.borderColor = "var(--border-hover)"; }}
+              onMouseLeave={(e) => { e.currentTarget.style.borderColor = "var(--border)"; }}
+            >
+              {soundOn ? <Volume2 size={16} /> : <VolumeX size={16} />}
+            </button>
             <button
               onClick={toggleTheme}
               title={theme === "dark" ? "Switch to light mode" : "Switch to dark mode"}
@@ -3208,77 +5994,104 @@ function AppShell({ session, onLogout, onSessionExpired, onTokensRefreshed, them
               {NAV.map((n) => {
                 const Icon = n.icon;
                 const active = view === n.key;
-                return <button key={n.key} onClick={() => selectView(n.key)} style={{ minHeight: 44, borderRadius: 10, border: `1px solid ${active ? "rgba(62,217,190,.25)" : "var(--border)"}`, background: active ? "var(--accent-dim)" : "var(--surface)", color: active ? "var(--accent)" : "var(--text-muted)", display: "flex", alignItems: "center", gap: 8, padding: "8px 10px", fontWeight: 600, fontSize: 12.5 }}><Icon size={15} />{n.label}</button>;
+                return <button key={n.key} onClick={() => selectView(n.key)} style={{ minHeight: 44, borderRadius: 10, border: `1px solid ${active ? "rgba(62,217,190,.25)" : "var(--border)"}`, background: active ? "var(--accent-dim)" : "var(--surface)", color: active ? "var(--accent)" : "var(--text-muted)", display: "flex", alignItems: "center", gap: 8, padding: "8px 10px", fontWeight: 600, fontSize: 12.5 }}><Icon size={15} />{n.label}{(n.key === "contact" || n.key === "messages") && unreadMessages > 0 ? <span className="hb-chat-badge-pill">{unreadMessages > 99 ? "99+" : unreadMessages}</span> : null}</button>;
               })}
             </div>
           </div>
         )}
 
-<main
-  className={`hb-main-content ${
-    view === "dashboard" ? "hb-dashboard-live" : ""
-  }`}
->
-  
+        <main
+          className={`hb-main-content ${view === "dashboard" ? "hb-dashboard-live" : ""
+            }`}
+        >
 
 
-  <div className="hb-content-frame">
-    {view === "dashboard" && (
-      <DashboardView
-        api={api}
-        wsConnected={wsConnected}
-        liveEvents={liveEvents}
-        role={role}
-        session={session}
-      />
-    )}
-     
-    {view === "reports" && <ReportsView api={api} />}
-    {view === "failures" && (
-      <FailuresView api={api} isAdmin={isAdmin} />
-    )}
-    {view === "analytics" && (
-      <AnalyticsView api={api} isAdmin={isAdmin} />
-    )}
-    {view === "clients" && isAdmin && (
-      <CrudView
-        api={api}
-        canWrite={isAdmin}
-        config={clientConfig}
-      />
-    )}
-    {view === "bots" && (
-      <CrudView
-        api={api}
-        canWrite={isAdmin}
-        config={botConfig}
-      />
-    )}
-    {view === "departments" && isAdmin && (
-      <CrudView
-        api={api}
-        canWrite={isAdmin}
-        config={departmentConfig}
-      />
-    )}
-    {view === "users" && isAdmin && (
-      <UsersView api={api} />
-    )}
-    {view === "account" && !isAdmin && (
-      <AccountView
-        api={api}
-        session={session}
-      />
-    )}
-  </div>
-</main>
+
+          <div className="hb-content-frame">
+            {view === "dashboard" && (
+              <DashboardView
+                api={api}
+                wsConnected={wsConnected}
+                liveEvents={liveEvents}
+                role={role}
+                isAdmin={isAdmin}
+                session={session}
+              />
+            )}
+
+
+
+            {view === "messages" && isAdmin && <MessagesView api={api} role={role} session={session} liveEvents={liveEvents} />}
+            {view === "contact" && !isAdmin && <MessagesView api={api} role={role} session={session} liveEvents={liveEvents} />}
+            {view === "reports" && <ReportsView api={api} onOpenLogs={openLogsFromRun} isAdmin={isAdmin} />}
+            {view === "logs" && isAdmin && <LogsView api={api} context={logContext} onBackToReports={() => selectView("reports")} />}
+            {view === "failures" && (
+              <FailuresView api={api} isAdmin={isAdmin} />
+            )}
+            {view === "client-management" && isAdmin && (
+              <ClientManagementCRUDView api={api} session={session} />
+            )}
+            {view === "clients" && isAdmin && (
+              <CrudView
+                api={api}
+                canWrite={isSuperAdmin}
+                config={clientConfig}
+                rowContext={{ onBotCountClick: openBotsForClient }}
+              />
+            )}
+            {view === "bots" && (
+              <CrudView
+                api={api}
+                canWrite={isSuperAdmin}
+                config={botConfig}
+                initialClientFilter={botsClientFilter}
+              />
+            )}
+            {view === "departments" && isAdmin && (
+              <CrudView
+                api={api}
+                canWrite={isSuperAdmin}
+                config={departmentConfig}
+              />
+            )}
+            {view === "users" && isSuperAdmin && (
+              <UsersView api={api} currentEmail={email} />
+            )}
+
+            {view === "action-items" && isAdmin && (
+              <ActionItems
+                api={api}
+                targetActionItem={targetActionItem}
+                onClearTargetActionItem={() => setTargetActionItem(null)}
+              />
+            )}
+            {view === "account" && !isAdmin && (
+              <AccountView
+                api={api}
+                session={session}
+              />
+            )}
+          </div>
+        </main>
       </div>
+
+
 
       <nav className="hb-mobile-nav" aria-label="Primary navigation">
         {NAV.map((n) => {
           const Icon = n.icon;
           const active = view === n.key;
-          return <button key={n.key} className={active ? "active" : ""} onClick={() => selectView(n.key)}><Icon size={17} /><span>{n.label}</span></button>;
+          return (
+            <button key={n.key} className={active ? "active" : ""} onClick={() => selectView(n.key)} style={{ position: "relative" }}>
+              <Icon size={17} />
+              <span>{n.label}</span>
+              {(n.key === "contact" || n.key === "messages") && unreadMessages > 0 ? (
+                <span className="hb-chat-badge-pill" style={{ position: "absolute", top: 2, right: "calc(50% - 18px)", transform: "scale(0.8)" }}>
+                  {unreadMessages > 99 ? "99+" : unreadMessages}
+                </span>
+              ) : null}
+            </button>
+          );
         })}
       </nav>
     </div>
