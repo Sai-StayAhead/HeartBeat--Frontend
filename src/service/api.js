@@ -19,7 +19,7 @@ export function decodeJwtExpiryMs(token) {
  * out of App.jsx so it can be imported by every dashboard component
  * instead of being re-derived per view.
  */
-export function useApi(baseUrl, session, onTokensRefreshed, onUnauthorized) {
+export function useApi(baseUrl, session, onTokensRefreshed, onUnauthorized, onRateLimited) {
   const refreshingRef = useRef(null);
 
   const doRefresh = useCallback(async () => {
@@ -51,6 +51,17 @@ export function useApi(baseUrl, session, onTokensRefreshed, onUnauthorized) {
       let body = null;
       try { body = await res.json(); } catch (_) { /* no body */ }
 
+      // Handle rate limiting (429)
+      if (res.status === 429) {
+        const retryAfter = res.headers.get("Retry-After");
+        const message = body?.message || `Too many requests. Please wait ${retryAfter ? retryAfter + " seconds" : "a moment"} before trying again.`;
+        const err = new Error(message);
+        err.status = 429;
+        err.retryAfter = retryAfter ? parseInt(retryAfter, 10) : undefined;
+        onRateLimited?.(err);
+        throw err;
+      }
+
       if (res.status === 401 && !isRetry && session.refreshToken) {
         try {
           const newToken = await doRefresh();
@@ -74,7 +85,7 @@ export function useApi(baseUrl, session, onTokensRefreshed, onUnauthorized) {
       }
       return body;
     },
-    [baseUrl, session.refreshToken, doRefresh, onUnauthorized]
+    [baseUrl, session.refreshToken, doRefresh, onUnauthorized, onRateLimited]
   );
 
   return useCallback((path, options = {}) => request(path, options, session.token), [request, session.token]);
@@ -98,4 +109,75 @@ export function buildDashboardQuery({ department, clientId, period } = {}) {
   if (period && period !== "all") params.set("period", period);
   const qs = params.toString();
   return qs ? `?${qs}` : "";
+}
+
+/**
+ * Health check utilities for backend connectivity
+ */
+export async function checkBackendHealth(baseUrl) {
+  try {
+    const res = await fetch(`${baseUrl}/health`, { method: "GET" });
+    if (!res.ok) return { healthy: false, status: res.status };
+    const data = await res.json();
+    return { healthy: data.status === "healthy", ...data };
+  } catch (err) {
+    return { healthy: false, error: err.message };
+  }
+}
+
+export async function checkBackendReady(baseUrl) {
+  try {
+    const res = await fetch(`${baseUrl}/ready`, { method: "GET" });
+    const data = await res.json();
+    return { ready: res.ok && data.status === "ready", ...data };
+  } catch (err) {
+    return { ready: false, error: err.message };
+  }
+}
+
+/**
+ * Hook for periodic backend health checks
+ */
+import { useState, useEffect } from "react";
+
+export function useBackendHealth(baseUrl, intervalMs = 60000) {
+  const [health, setHealth] = useState({ healthy: true, checking: false });
+  const [readiness, setReadiness] = useState({ ready: true, checking: false });
+
+  useEffect(() => {
+    if (!baseUrl) return;
+
+    let mounted = true;
+    let healthTimer, readyTimer;
+
+    const checkHealth = async () => {
+      if (!mounted) return;
+      setHealth(h => ({ ...h, checking: true }));
+      const result = await checkBackendHealth(baseUrl);
+      if (mounted) setHealth({ ...result, checking: false });
+    };
+
+    const checkReadiness = async () => {
+      if (!mounted) return;
+      setReadiness(r => ({ ...r, checking: true }));
+      const result = await checkBackendReady(baseUrl);
+      if (mounted) setReadiness({ ...result, checking: false });
+    };
+
+    // Initial checks
+    checkHealth();
+    checkReadiness();
+
+    // Periodic checks
+    healthTimer = setInterval(checkHealth, intervalMs);
+    readyTimer = setInterval(checkReadiness, intervalMs * 2); // Less frequent
+
+    return () => {
+      mounted = false;
+      clearInterval(healthTimer);
+      clearInterval(readyTimer);
+    };
+  }, [baseUrl, intervalMs]);
+
+  return { health, readiness };
 }

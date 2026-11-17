@@ -7,7 +7,7 @@ import {
   TrendingUp, Building2, AlertOctagon, Unlock, RotateCcw, ShieldAlert,
   Filter, ChevronDown, HardDrive, CalendarClock, Sun, Moon, Search,
   ChevronsLeft, ChevronsRight, FileText, MessageSquare, Send,
-  Copy, Link2, ClipboardList, Eye, EyeOff, Lamp, Volume2, VolumeX, Reply, Mail
+  Copy,Globe, Link2, ClipboardList, Eye, EyeOff, Lamp, Volume2, VolumeX, Reply, Mail, Tag
 } from "lucide-react";
 import {
   ResponsiveContainer, AreaChart, Area, BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, Cell
@@ -18,6 +18,8 @@ import ClientManagementCRUDView from "./components/ClientManagementCRUD";
 import ActionItems from "./components/ActionItems";
 import Notifications from "./components/Notifications";
 import { handleWebSocketSoundEvent, isSoundEnabled, toggleSound } from "./service/soundService";
+import BotVersionHistoryModal from "./components/BotVersionHistory";
+import TimezonePlanner from "./components/TimezonePlanner";
 
 /* ------------------------------------------------------------------ */
 /* Design tokens — "vitals monitor" system                             */
@@ -48,10 +50,13 @@ function useApi(baseUrl, session, onTokensRefreshed, onUnauthorized) {
   const doRefresh = useCallback(async () => {
     if (refreshingRef.current) return refreshingRef.current;
     refreshingRef.current = (async () => {
-      const res = await fetch(`${baseUrl}/auth/refresh`, {
+      const res = await fetch(`${baseUrl || ""}/auth/refresh`, {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ refresh_token: session.refreshToken }),
+        headers: {
+          "Content-Type": "application/json",
+          "ngrok-skip-browser-warning": "true",
+        },
+        body: JSON.stringify({ refresh_token: session?.refreshToken }),
       });
       if (!res.ok) throw new Error("refresh failed");
       const data = await res.json();
@@ -63,17 +68,24 @@ function useApi(baseUrl, session, onTokensRefreshed, onUnauthorized) {
     } finally {
       refreshingRef.current = null;
     }
-  }, [baseUrl, session.refreshToken, onTokensRefreshed]);
+  }, [baseUrl, session?.refreshToken, onTokensRefreshed]);
 
   const request = useCallback(
     async (path, options = {}, token, isRetry = false) => {
       const { responseType, ...fetchOptions } = options;
-      const headers = { "Content-Type": "application/json", ...(fetchOptions.headers || {}) };
+      const isFormData = typeof FormData !== "undefined" && fetchOptions.body instanceof FormData;
+      const headers = {
+        ...(isFormData ? {} : { "Content-Type": "application/json" }),
+        "ngrok-skip-browser-warning": "true",
+        ...(fetchOptions.headers || {}),
+      };
       if (token) headers["Authorization"] = `Bearer ${token}`;
 
-      const res = await fetch(`${baseUrl}${path}`, { ...fetchOptions, headers });
+      const res = await fetch(`${baseUrl || ""}${path}`, { ...fetchOptions, headers });
       let body = null;
-      if (responseType === "text") {
+      if (responseType === "blob" && res.ok) {
+        try { body = await res.blob(); } catch (_) { /* no body */ }
+      } else if (responseType === "text") {
         try { body = await res.text(); } catch (_) { /* no body */ }
       } else {
         try { body = await res.json(); } catch (_) { /* no body */ }
@@ -318,9 +330,34 @@ const inputStyle = {
 };
 
 /* Password input with a 🙈/🙉 visibility toggle — used on the login
-   form and the create-login modal. */
-function PasswordField({ value, onChange, placeholder, required, minLength, autoComplete }) {
+   form and the create-login modal. Includes password strength indicator. */
+function PasswordField({
+  value,
+  onChange,
+  placeholder,
+  required,
+  minLength = 8,
+  autoComplete,
+  showRequirements = false,
+}) {
   const [visible, setVisible] = useState(false);
+
+  // Password strength checks
+  const hasMinLength = value.length >= minLength;
+  const hasUppercase = /[A-Z]/.test(value);
+  const hasLowercase = /[a-z]/.test(value);
+  const hasNumber = /[0-9]/.test(value);
+  const hasSpecial = /[!@#$%^&*()_+\-=[\]{}|;:,.<>?]/.test(value);
+  const isValid = hasMinLength && hasUppercase && hasLowercase && hasNumber && hasSpecial;
+
+  const requirements = [
+    { label: `At least ${minLength} characters`, met: hasMinLength },
+    { label: "One uppercase letter", met: hasUppercase },
+    { label: "One lowercase letter", met: hasLowercase },
+    { label: "One number", met: hasNumber },
+    { label: "One special character (!@#$%^&*)", met: hasSpecial },
+  ];
+
   return (
     <div style={{ position: "relative" }}>
       <input
@@ -332,6 +369,7 @@ function PasswordField({ value, onChange, placeholder, required, minLength, auto
         value={value}
         onChange={onChange}
         placeholder={placeholder}
+        aria-describedby={showRequirements ? "password-requirements" : undefined}
       />
       <button
         type="button"
@@ -347,6 +385,39 @@ function PasswordField({ value, onChange, placeholder, required, minLength, auto
       >
         {visible ? <EyeOff size={16} /> : <Eye size={16} />}
       </button>
+
+      {showRequirements && (
+        <div id="password-requirements" style={{ marginTop: 8, fontSize: 11.5, color: "var(--text-dim)" }}>
+          <div style={{ fontWeight: 600, marginBottom: 4, color: "var(--text-muted)" }}>
+            Password requirements:
+          </div>
+          <ul style={{ margin: 0, paddingLeft: 18, lineHeight: 1.8 }}>
+            {requirements.map((req, i) => (
+              <li key={i} style={{
+                color: req.met ? "var(--success)" : "var(--text-dim)",
+                listStyleType: req.met ? '"✓ "' : '"○ "',
+                fontFamily: "var(--font-mono)",
+              }}>
+                {req.label}
+              </li>
+            ))}
+          </ul>
+          <div style={{
+            marginTop: 6,
+            height: 4,
+            borderRadius: 2,
+            background: "var(--surface-2)",
+            overflow: "hidden",
+          }}>
+            <div style={{
+              width: `${(requirements.filter(r => r.met).length / requirements.length) * 100}%`,
+              height: "100%",
+              background: isValid ? "var(--success)" : "var(--warning)",
+              transition: "width 0.3s ease, background 0.3s ease",
+            }} />
+          </div>
+        </div>
+      )}
     </div>
   );
 }
@@ -410,9 +481,10 @@ function ResetPasswordModal({ api, user, onClose, onDone }) {
             value={newPassword}
             onChange={(e) => setNewPassword(e.target.value)}
             required
-            minLength={6}
+            minLength={8}
             autoComplete="new-password"
-            placeholder="Enter new password"
+            placeholder="Min 8 characters with complexity"
+            showRequirements
           />
         </Field>
         <div style={{ display: "flex", gap: 10, justifyContent: "flex-end", marginTop: 14 }}>
@@ -431,6 +503,7 @@ function CreateUserModal({ api, onClose, onCreated }) {
   const [password, setPassword] = useState("");
   const [role, setRole] = useState("admin");
   const [clientId, setClientId] = useState("");
+  const [department, setDepartment] = useState("");
   const [clients, setClients] = useState([]);
   const [error, setError] = useState("");
   const [loading, setLoading] = useState(false);
@@ -456,6 +529,7 @@ function CreateUserModal({ api, onClose, onCreated }) {
           password,
           role,
           client_id: role === "client" ? Number(clientId) : undefined,
+          department: department.trim() || undefined,
         }),
       });
       onCreated();
@@ -487,9 +561,10 @@ function CreateUserModal({ api, onClose, onCreated }) {
             value={password}
             onChange={(e) => setPassword(e.target.value)}
             required
-            minLength={6}
+            minLength={8}
             autoComplete="new-password"
-            placeholder="Min 6 characters"
+            placeholder="Min 8 characters with complexity"
+            showRequirements
           />
         </Field>
 
@@ -504,6 +579,16 @@ function CreateUserModal({ api, onClose, onCreated }) {
             <option value="admin3">Admin 3 (View Only)</option>
             <option value="client">Client</option>
           </select>
+        </Field>
+
+        <Field label="Department (Optional)">
+          <input
+            style={inputStyle}
+            type="text"
+            value={department}
+            onChange={(e) => setDepartment(e.target.value)}
+            placeholder="e.g. Finance, Accounting, Ops"
+          />
         </Field>
 
         {role === "client" && (
@@ -692,6 +777,17 @@ function fmtDuration(seconds) {
   return `${hrs}h ${remMins}m`;
 }
 
+function formatDate(value) {
+  if (!value) return "—";
+  const date = new Date(String(value).includes("T") ? value : `${value}T00:00:00`);
+  if (Number.isNaN(date.getTime())) return "—";
+  return date.toLocaleDateString(undefined, {
+    month: "short",
+    day: "numeric",
+    year: "numeric",
+  });
+}
+
 function isWithinLastDays(iso, days) {
   if (!iso) return false;
   const t = new Date(iso).getTime();
@@ -802,13 +898,21 @@ function ExecutionPulseBar({ events, connected }) {
 }
 
 function LoginScreen({ onLogin, sessionMessage, theme, toggleTheme }) {
-  const [baseUrl, setBaseUrl] = useState(window.location.origin);
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
   const [isLocked, setIsLocked] = useState(false);
   const [showLockedModal, setShowLockedModal] = useState(false);
+  const [rateLimitCountdown, setRateLimitCountdown] = useState(0);
+
+  // Handle rate limit countdown
+  useEffect(() => {
+    if (rateLimitCountdown > 0) {
+      const timer = setTimeout(() => setRateLimitCountdown(c => c - 1), 1000);
+      return () => clearTimeout(timer);
+    }
+  }, [rateLimitCountdown]);
 
   const submit = async (e) => {
     e.preventDefault();
@@ -818,15 +922,36 @@ function LoginScreen({ onLogin, sessionMessage, theme, toggleTheme }) {
     setLoading(true);
 
     try {
-      const res = await fetch(`${baseUrl}/auth/login`, {
+      const res = await fetch("/auth/login", {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
+        headers: {
+          "Content-Type": "application/json",
+          "ngrok-skip-browser-warning": "true",
+        },
         body: JSON.stringify({ email, password }),
       });
 
-      const data = await res.json();
+      // Parse JSON safely - handle empty/non-JSON responses
+      let data = null;
+      try {
+        data = await res.json();
+      } catch (jsonErr) {
+        // Response was not valid JSON (empty, HTML error page, etc.)
+        if (!res.ok) {
+          throw new Error(`Server error (${res.status}): ${res.statusText || "No response body"}`);
+        }
+        throw new Error("Invalid server response");
+      }
+
+      // Handle rate limiting (429)
+      if (res.status === 429) {
+        const retryAfter = data?.retryAfter || res.headers.get("Retry-After") || 60;
+        setRateLimitCountdown(retryAfter);
+        throw new Error(data?.message || `Too many login attempts. Please wait ${retryAfter} seconds before trying again.`);
+      }
+
       if (!res.ok) {
-        const errorMsg = data?.message || (typeof data?.detail === "string" ? data.detail : data?.detail?.[0]?.msg) || "Login failed.";
+        const errorMsg = data?.message || (typeof data?.detail === "string" ? data.detail : data?.detail?.[0]?.msg) || `Login failed (${res.status})`;
         const accountIsLocked = data?.code === "ACCOUNT_LOCKED" || (
           !errorMsg.toLowerCase().includes("remaining") &&
           (errorMsg.toLowerCase().includes("account locked") || errorMsg.toLowerCase().includes("contact admin"))
@@ -839,7 +964,7 @@ function LoginScreen({ onLogin, sessionMessage, theme, toggleTheme }) {
       }
 
       onLogin({
-        baseUrl,
+        baseUrl: window.location.origin,
         token: data.access_token,
         refreshToken: data.refresh_token,
         role: data.role,
@@ -847,7 +972,9 @@ function LoginScreen({ onLogin, sessionMessage, theme, toggleTheme }) {
         email,
       });
     } catch (err) {
-      setError(err.message || "Could not reach the server.");
+      // Don't show "Unexpected end of JSON input" to user
+      const msg = err.message.includes("JSON") ? "Server returned invalid response. Check backend logs." : err.message;
+      setError(msg || "Could not reach the server.");
     } finally {
       setLoading(false);
     }
@@ -933,18 +1060,31 @@ function LoginScreen({ onLogin, sessionMessage, theme, toggleTheme }) {
                 onChange={(e) => setPassword(e.target.value)}
                 placeholder="••••••••"
                 required
+                minLength={1}
                 autoComplete="current-password"
               />
             </Field>
 
             <Button
               type="submit"
-              disabled={loading}
+              disabled={loading || rateLimitCountdown > 0}
               style={{ width: "100%", justifyContent: "center", marginTop: 4 }}
             >
               {loading ? <Loader2 size={15} style={{ animation: "hb-spin 1s linear infinite" }} /> : null}
-              {loading ? "Signing in…" : "Sign in"}
+              {loading ? "Signing in…" : rateLimitCountdown > 0 ? `Try again in ${rateLimitCountdown}s` : "Sign in"}
             </Button>
+
+            {rateLimitCountdown > 0 && (
+              <div style={{
+                marginTop: 10, padding: "8px 12px", borderRadius: 6,
+                background: "var(--warning-dim)", border: "1px solid var(--warning)",
+                color: "var(--warning)", fontSize: 12, textAlign: "center",
+                fontFamily: "var(--font-mono)",
+              }}>
+                <AlertTriangle size={12} style={{ verticalAlign: "middle", marginRight: 4 }} />
+                Rate limited: <strong>{rateLimitCountdown}s</strong> until next attempt allowed
+              </div>
+            )}
 
             <div className="hb-login-contact">
               <span>Need help?</span>
@@ -1068,7 +1208,13 @@ function useClientOptions(api) {
     (async () => {
       try {
         const res = await api("/clients/");
-        setOpts((res?.data || []).map((c) => ({ value: c.client_id, label: c.client_name })));
+        const mapped = (res?.data || []).map((c) => ({
+          value: c.client_id,
+          label: (c.client_name || "").trim(),
+          timezone: c.timezone || "America/New_York",
+        }));
+        mapped.sort((a, b) => a.label.localeCompare(b.label, undefined, { sensitivity: "base" }));
+        setOpts(mapped);
       } catch (_) { /* non-critical */ }
     })();
   }, [api]);
@@ -1410,7 +1556,80 @@ function useEventRate(events) {
   return rate;
 }
 
-function ClientBotDetailModal({ api, client, onClose }) {
+function BotRunStatusActions({
+  api,
+  run,
+  isAdmin,
+  isSuperAdmin = false,
+  onUpdated,
+  onError,
+  allowReopen = false,
+  compact = false,
+}) {
+  const [busyStatus, setBusyStatus] = useState("");
+  if (!isSuperAdmin || !run?.run_id) return null;
+
+  const handleChangeStatus = async (e, nextStatus) => {
+    e.stopPropagation();
+    if (busyStatus || run.status === nextStatus) return;
+    setBusyStatus(nextStatus);
+    onError?.("");
+    try {
+      const updated = await api(`/dashboard/bot-runs/${run.run_id}/status`, {
+        method: "PATCH",
+        body: JSON.stringify({ status: nextStatus }),
+      });
+      onUpdated?.(updated || { ...run, status: nextStatus });
+    } catch (err) {
+      onError?.(err.message || `Failed to mark run as ${nextStatus}.`);
+    } finally {
+      setBusyStatus("");
+    }
+  };
+
+  return (
+    <div className={`hb-run-status-actions ${compact ? "compact" : ""}`} onClick={(e) => e.stopPropagation()}>
+      {run.status !== "Success" && (
+        <button
+          type="button"
+          className={`hb-run-status-btn success ${compact ? "compact" : ""}`}
+          disabled={!!busyStatus}
+          onClick={(e) => handleChangeStatus(e, "Success")}
+          title="Mark this run as Success"
+        >
+          {busyStatus === "Success" ? <Loader2 size={11} className="hb-spin" /> : <CheckCircle2 size={compact ? 11 : 13} />}
+          <span>{compact ? "Success" : "Mark Success"}</span>
+        </button>
+      )}
+      {run.status !== "Failed" && (
+        <button
+          type="button"
+          className={`hb-run-status-btn failed ${compact ? "compact" : ""}`}
+          disabled={!!busyStatus}
+          onClick={(e) => handleChangeStatus(e, "Failed")}
+          title="Mark this run as Failed"
+        >
+          {busyStatus === "Failed" ? <Loader2 size={11} className="hb-spin" /> : <XCircle size={compact ? 11 : 13} />}
+          <span>{compact ? "Failed" : "Mark Failed"}</span>
+        </button>
+      )}
+      {allowReopen && run.status !== "Started" && (
+        <button
+          type="button"
+          className={`hb-run-status-btn running ${compact ? "compact" : ""}`}
+          disabled={!!busyStatus}
+          onClick={(e) => handleChangeStatus(e, "Started")}
+          title="Revert run status to Running"
+        >
+          {busyStatus === "Started" ? <Loader2 size={11} className="hb-spin" /> : <Clock size={compact ? 11 : 13} />}
+          <span>{compact ? "Running" : "Set Running"}</span>
+        </button>
+      )}
+    </div>
+  );
+}
+
+function ClientBotDetailModal({ api, client, isAdmin = false, isSuperAdmin = false, onStatusUpdated, onClose }) {
   const [bots, setBots] = useState([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
@@ -1431,7 +1650,7 @@ function ClientBotDetailModal({ api, client, onClose }) {
   }, [api, client.client_id]);
 
   return (
-    <Modal title={`${client.client_name} — running bots`} onClose={onClose} width={440}>
+    <Modal title={`${client.client_name} — running bots`} onClose={onClose} width={520}>
       <ErrorBanner message={error} onDismiss={() => setError("")} />
       {loading && <div style={{ color: "var(--text-dim)", fontSize: 13, padding: "10px 0" }}>Loading…</div>}
       {!loading && bots.length === 0 && (
@@ -1451,6 +1670,20 @@ function ClientBotDetailModal({ api, client, onClose }) {
               <div style={{ fontSize: 11.5, color: "var(--text-dim)" }}>Started {timeAgo(b.start_time)}</div>
             </div>
             <Badge tone="warning">Running</Badge>
+            {isSuperAdmin && (
+              <BotRunStatusActions
+                api={api}
+                run={{ ...b, status: "Started" }}
+                isAdmin={isAdmin}
+                isSuperAdmin={isSuperAdmin}
+                compact
+                onError={setError}
+                onUpdated={(updated) => {
+                  setBots((prev) => prev.filter((item) => item.run_id !== b.run_id));
+                  onStatusUpdated?.(updated);
+                }}
+              />
+            )}
           </div>
         ))}
       </div>
@@ -1507,7 +1740,7 @@ function ClientCountChip({ client, index, onClick }) {
 /* Shows only clients that currently have at least one bot running —
    the whole point of the strip is "who's active right now", so idle
    clients (running_count === 0) are filtered out rather than listed. */
-function ClientActivityStrip({ api }) {
+function ClientActivityStrip({ api, isAdmin = false, isSuperAdmin = false, onStatusUpdated }) {
   const [clients, setClients] = useState([]);
   const [error, setError] = useState("");
   const [detailClient, setDetailClient] = useState(null);
@@ -1547,7 +1780,17 @@ function ClientActivityStrip({ api }) {
         {runningClients.map((c, i) => <ClientCountChip key={c.client_id} client={c} index={i} onClick={setDetailClient} />)}
       </div>
       {detailClient && (
-        <ClientBotDetailModal api={api} client={detailClient} onClose={() => setDetailClient(null)} />
+        <ClientBotDetailModal
+          api={api}
+          client={detailClient}
+          isAdmin={isAdmin}
+          isSuperAdmin={isSuperAdmin}
+          onStatusUpdated={() => {
+            load();
+            onStatusUpdated?.();
+          }}
+          onClose={() => setDetailClient(null)}
+        />
       )}
     </div>
   );
@@ -1995,6 +2238,7 @@ function EditUserModal({ api, user, onClose, onUpdated }) {
   const [role, setRole] = useState(user.role);
   const [status, setStatus] = useState(user.status);
   const [clientId, setClientId] = useState(user.client_id || "");
+  const [department, setDepartment] = useState(user.department || "");
   const [clients, setClients] = useState([]);
   const [error, setError] = useState("");
   const [loading, setLoading] = useState(false);
@@ -2019,6 +2263,7 @@ function EditUserModal({ api, user, onClose, onUpdated }) {
           role,
           status,
           client_id: role === "client" ? Number(clientId) : null,
+          department: department.trim() || null,
         }),
       });
       onUpdated();
@@ -2042,6 +2287,16 @@ function EditUserModal({ api, user, onClose, onUpdated }) {
             <option value="admin3">Admin 3 (View Only)</option>
             <option value="client">Client</option>
           </select>
+        </Field>
+
+        <Field label="Department (Optional)">
+          <input
+            style={inputStyle}
+            type="text"
+            value={department}
+            onChange={(e) => setDepartment(e.target.value)}
+            placeholder="e.g. Finance, Accounting, Ops"
+          />
         </Field>
 
         {role === "client" && (
@@ -2173,6 +2428,7 @@ function UsersView({ api, currentEmail }) {
             <thead>
               <tr style={{ borderBottom: "1px solid var(--border)" }}>
                 <th style={{ textAlign: "left", padding: "11px 16px", color: "var(--text-muted)", fontWeight: 500, fontSize: 12 }}>Email</th>
+                <th style={{ textAlign: "left", padding: "11px 16px", color: "var(--text-muted)", fontWeight: 500, fontSize: 12 }}>Department</th>
                 <th style={{ textAlign: "left", padding: "11px 16px", color: "var(--text-muted)", fontWeight: 500, fontSize: 12 }}>Role</th>
                 <th style={{ textAlign: "left", padding: "11px 16px", color: "var(--text-muted)", fontWeight: 500, fontSize: 12 }}>Status</th>
                 <th style={{ textAlign: "left", padding: "11px 16px", color: "var(--text-muted)", fontWeight: 500, fontSize: 12 }}>Login Status</th>
@@ -2181,10 +2437,10 @@ function UsersView({ api, currentEmail }) {
             </thead>
             <tbody>
               {loading && (
-                <tr><td colSpan={5} style={{ padding: 28, textAlign: "center", color: "var(--text-dim)" }}>Loading users…</td></tr>
+                <tr><td colSpan={6} style={{ padding: 28, textAlign: "center", color: "var(--text-dim)" }}>Loading users…</td></tr>
               )}
               {!loading && filteredUsers.length === 0 && (
-                <tr><td colSpan={5} style={{ padding: 28, textAlign: "center", color: "var(--text-dim)" }}>
+                <tr><td colSpan={6} style={{ padding: 28, textAlign: "center", color: "var(--text-dim)" }}>
                   {users.length === 0 ? "No logins created yet." : "No users match your filter."}
                 </td></tr>
               )}
@@ -2193,6 +2449,9 @@ function UsersView({ api, currentEmail }) {
                 return (
                   <tr key={u.user_id} className="hb-row-hover" style={{ borderBottom: "1px solid var(--border)" }}>
                     <td style={{ padding: "11px 16px", fontWeight: 600 }}>{u.email}</td>
+                    <td style={{ padding: "11px 16px" }}>
+                      {u.department ? <Badge tone="accent">{u.department}</Badge> : <span style={{ color: "var(--text-dim)" }}>—</span>}
+                    </td>
                     <td style={{ padding: "11px 16px" }}>
                       <Badge tone={["admin", "admin2", "admin3"].includes(u.role) ? "accent" : "muted"}>{u.role}</Badge>
                     </td>
@@ -2291,12 +2550,14 @@ function UsersView({ api, currentEmail }) {
   );
 }
 
-function DashboardView({ api, wsConnected, liveEvents, isAdmin, role, session }) {
+function DashboardView({ api, wsConnected, liveEvents, isAdmin, isSuperAdmin = false, role, session, onNavigateView }) {
+  const effectiveSuperAdmin = isSuperAdmin || role === "admin";
   const [summary, setSummary] = useState(null);
   const [recent, setRecent] = useState([]);
   const [runTrendRaw, setRunTrendRaw] = useState([]);
   const [hoursTrendRaw, setHoursTrendRaw] = useState([]);
   const [statusSummary, setStatusSummary] = useState(null);
+  const [maintenanceItems, setMaintenanceItems] = useState([]);
   const [error, setError] = useState("");
   const [department, setDepartment] = useState(null);
   const [clientId, setClientId] = useState(null);
@@ -2332,18 +2593,21 @@ function DashboardView({ api, wsConnected, liveEvents, isAdmin, role, session })
       const qs = buildQs();
       const recentSuffix = qs ? `${qs}&limit=100` : `?limit=100`;
       const trendSuffix = qs ? `${qs}&period=${period}` : `?period=${period}`;
-      const [s, r, rt, ht, ss] = await Promise.all([
+      const maintQs = `status=UNDER_MAINTENANCE${isAdmin && clientId ? `&client_id=${clientId}` : ""}`;
+      const [s, r, rt, ht, ss, maintRes] = await Promise.all([
         api(`/dashboard/summary${qs}`),
         api(`/dashboard/recent-runs${recentSuffix}`),
         api(`/dashboard/run-trend${trendSuffix}`),
         api(`/dashboard/hours-saved-trend${trendSuffix}`),
         api(`/dashboard/status-summary${trendSuffix}`),
+        api(`/action-items/?${maintQs}`).catch(() => []),
       ]);
       setSummary(s);
       setRecent(r || []);
       setRunTrendRaw(rt || []);
       setHoursTrendRaw(ht || []);
       setStatusSummary(ss);
+      setMaintenanceItems(Array.isArray(maintRes) ? maintRes : maintRes?.data || []);
     } catch (err) {
       setError(err.message);
     }
@@ -2478,12 +2742,82 @@ function DashboardView({ api, wsConnected, liveEvents, isAdmin, role, session })
       <ErrorBanner message={error} onDismiss={() => setError("")} />
       <ExecutionPulseBar events={liveEvents} connected={wsConnected} />
 
+      {maintenanceItems.length > 0 && (
+        <div style={{
+          display: "flex",
+          alignItems: "center",
+          justifyContent: "space-between",
+          gap: 12,
+          background: isAdmin ? "rgba(245, 158, 11, 0.12)" : "rgba(239, 68, 68, 0.10)",
+          border: isAdmin ? "1px solid rgba(245, 158, 11, 0.35)" : "1px solid rgba(239, 68, 68, 0.35)",
+          borderRadius: 12,
+          padding: "12px 18px",
+          marginBottom: 16,
+          animation: "hb-rise .2s ease both",
+        }}>
+          <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
+            <div style={{
+              width: 34,
+              height: 34,
+              borderRadius: "50%",
+              background: isAdmin ? "rgba(245, 158, 11, 0.2)" : "rgba(239, 68, 68, 0.18)",
+              display: "grid",
+              placeItems: "center",
+              color: isAdmin ? "#f59e0b" : "#ef4444",
+              flexShrink: 0,
+            }}>
+              <AlertTriangle size={18} />
+            </div>
+            <div>
+              <div style={{ fontWeight: 700, fontSize: 13.5, color: isAdmin ? "#f59e0b" : "#ef4444", display: "flex", alignItems: "center", gap: 6, flexWrap: "wrap" }}>
+                {isAdmin ? "Under Maintenance Active" : "Maintenance Warning — Do Not Run"}
+                <span style={{
+                  fontSize: 11,
+                  background: isAdmin ? "rgba(245, 158, 11, 0.2)" : "rgba(239, 68, 68, 0.18)",
+                  padding: "1px 6px",
+                  borderRadius: 999,
+                }}>
+                  {maintenanceItems.length} {maintenanceItems.length === 1 ? (isAdmin ? "task" : "bot") : (isAdmin ? "tasks" : "bots")}
+                </span>
+              </div>
+              {isAdmin ? (
+                <div style={{ fontSize: 12.5, color: "var(--text-muted)", marginTop: 2 }}>
+                  {maintenanceItems.map((m) => (m.bot_name ? `🤖 ${m.bot_name}: ${m.task_title}` : m.task_title)).join(" • ")}
+                </div>
+              ) : (
+                <div style={{ display: "flex", flexDirection: "column", gap: 3, marginTop: 4 }}>
+                  {maintenanceItems.map((m) => (
+                    <div key={m.action_item_id} style={{ fontSize: 12.5, color: "var(--text)" }}>
+                      {m.bot_name ? <strong>🤖 {m.bot_name}: </strong> : null}
+                      <span>This bot is under maintenance. Do not run.</span>
+                      {m.task_title && <span style={{ color: "var(--text-muted)" }}> ({m.task_title})</span>}
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
+          </div>
+          {onNavigateView && (
+            <Button variant="ghost" onClick={() => onNavigateView(isAdmin ? "action-items" : "tickets")} style={{ fontSize: 12 }}>
+              View Details →
+            </Button>
+          )}
+        </div>
+      )}
+
       <section className="hb-dashboard-intro">
         <div className="hb-dashboard-intro-copy">
           <div>
             <div className="hb-eyebrow">{isAdmin ? "Robots " : "Client operations"}</div>
             <h1 className="hb-v3-title">{isAdmin ? " Performance Dashboard" : `${clientName} Robots Performance`}</h1>
             <p className="hb-v3-subtitle">Real-time visibility into today's executions, automation value and operational health.</p>
+            {!isAdmin && onNavigateView && (
+              <div style={{ marginTop: 12 }}>
+                <Button onClick={() => onNavigateView("tickets")} style={{ gap: 6, fontSize: 12.5, padding: "6px 14px" }}>
+                  <Plus size={14} /> Raise Ticket / Request
+                </Button>
+              </div>
+            )}
           </div>
 
         </div>
@@ -2507,7 +2841,7 @@ function DashboardView({ api, wsConnected, liveEvents, isAdmin, role, session })
         </div>
       </section>
 
-      {isAdmin && <ClientActivityStrip api={api} />}
+      {isAdmin && <ClientActivityStrip api={api} isAdmin={isAdmin} isSuperAdmin={effectiveSuperAdmin} onStatusUpdated={load} />}
 
       <section className="hb-today-section">
         <div className="hb-section-rule"><div className="hb-eyebrow">Today's run summary</div><span className="hb-section-date">{new Date().toLocaleDateString(undefined, { weekday: "short", month: "short", day: "numeric" })}</span></div>
@@ -2630,13 +2964,13 @@ function DashboardView({ api, wsConnected, liveEvents, isAdmin, role, session })
           </div>
           {historyExpanded && (
             <>
-              <div className="hb-runs-table-head">
+              <div className={`hb-runs-table-head ${effectiveSuperAdmin ? "has-admin-actions" : ""}`}>
                 <span>Bot & ID</span>
                 <span>Client</span>
                 <span>Status</span>
                 <span>Duration</span>
                 <span>Started</span>
-                {/* <span style={{ textAlign: "right" }}>Logs</span> */}
+                {effectiveSuperAdmin && <span style={{ textAlign: "right" }}>Actions</span>}
               </div>
               <div className="hb-scroll hb-runs-list">
                 {filteredRecent.length === 0 && (
@@ -2649,7 +2983,7 @@ function DashboardView({ api, wsConnected, liveEvents, isAdmin, role, session })
                 {filteredRecent.map((r, i) => (
                   <div
                     key={r.run_id}
-                    className={`hb-run-row ${i === 0 && liveEvents.length ? "fresh" : ""}`}
+                    className={`hb-run-row ${effectiveSuperAdmin ? "has-admin-actions" : ""} ${i === 0 && liveEvents.length ? "fresh" : ""}`}
                     onClick={() => setSelectedRunLog(r)}
                     role="button"
                     tabIndex={0}
@@ -2688,20 +3022,20 @@ function DashboardView({ api, wsConnected, liveEvents, isAdmin, role, session })
                       <strong>{formatRunTime(r.start_time)}</strong>
                       <small>{timeAgo(r.start_time)}</small>
                     </div>
-                    {/* <div className="hb-run-action" style={{ textAlign: "right" }}>
-                      <button
-                        type="button"
-                        className="hb-run-log-btn"
-                        onClick={(e) => {
-                          e.stopPropagation();
-                          setSelectedRunLog(r);
-                        }}
-                        title="View log files"
-                      >
-                        <FileText size={13} />
-                        <span>Logs</span>
-                      </button>
-                    </div> */}
+                    {effectiveSuperAdmin && (
+                      <div className="hb-run-action" style={{ display: "flex", justifyContent: "flex-end" }}>
+                        <BotRunStatusActions
+                          api={api}
+                          run={r}
+                          isAdmin={isAdmin}
+                          isSuperAdmin={effectiveSuperAdmin}
+                          compact
+                          allowReopen
+                          onError={setError}
+                          onUpdated={() => load()}
+                        />
+                      </div>
+                    )}
                   </div>
                 ))}
               </div>
@@ -2715,6 +3049,9 @@ function DashboardView({ api, wsConnected, liveEvents, isAdmin, role, session })
           api={api}
           bot={{ bot_name: selectedRunLog.bot_name, bot_id: selectedRunLog.bot_id }}
           run={selectedRunLog}
+          isAdmin={isAdmin}
+          isSuperAdmin={effectiveSuperAdmin}
+          onStatusUpdated={() => load()}
           onClose={() => setSelectedRunLog(null)}
         />
       )}
@@ -2726,11 +3063,16 @@ function DashboardView({ api, wsConnected, liveEvents, isAdmin, role, session })
     </div>
   );
 }
-function RunLogsModal({ api, bot, run, onClose }) {
+function RunLogsModal({ api, bot, run, isAdmin = false, isSuperAdmin = false, onStatusUpdated, onClose }) {
+  const [currentRun, setCurrentRun] = useState(run);
   const [attachments, setAttachments] = useState([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
   const [selectedAttachment, setSelectedAttachment] = useState(null);
+
+  useEffect(() => {
+    setCurrentRun(run);
+  }, [run]);
 
   useEffect(() => {
     let cancelled = false;
@@ -2794,8 +3136,8 @@ function RunLogsModal({ api, bot, run, onClose }) {
         <div>
           <div style={{ color: "var(--text-dim)", fontSize: 10.5, textTransform: "uppercase", letterSpacing: 0.5 }}>Status</div>
           <div style={{ marginTop: 2 }}>
-            <Badge tone={run?.status === "Success" ? "success" : run?.status === "Failed" ? "danger" : run?.status === "Started" ? "warning" : "muted"}>
-              {run?.status === "Started" ? "Running" : run?.status}
+            <Badge tone={currentRun?.status === "Success" ? "success" : currentRun?.status === "Failed" ? "danger" : currentRun?.status === "Started" ? "warning" : "muted"}>
+              {currentRun?.status === "Started" ? "Running" : currentRun?.status}
             </Badge>
           </div>
         </div>
@@ -2803,26 +3145,68 @@ function RunLogsModal({ api, bot, run, onClose }) {
         <div>
           <div style={{ color: "var(--text-dim)", fontSize: 10.5, textTransform: "uppercase", letterSpacing: 0.5 }}>Duration</div>
           <div style={{ fontWeight: 600, fontSize: 12.5, marginTop: 2, fontFamily: "var(--font-mono)" }}>
-            {run?.status === "Started" ? "In progress…" : fmtDuration(run?.duration_seconds)}
+            {currentRun?.status === "Started" ? "In progress…" : fmtDuration(currentRun?.duration_seconds)}
           </div>
         </div>
 
         <div>
           <div style={{ color: "var(--text-dim)", fontSize: 10.5, textTransform: "uppercase", letterSpacing: 0.5 }}>Started At</div>
           <div style={{ fontWeight: 500, fontSize: 12, marginTop: 2 }}>
-            {run?.start_time ? new Date(run.start_time).toLocaleTimeString(undefined, { hour: "2-digit", minute: "2-digit" }) : "—"}
+            {currentRun?.start_time ? new Date(currentRun.start_time).toLocaleTimeString(undefined, { hour: "2-digit", minute: "2-digit" }) : "—"}
           </div>
           <div style={{ color: "var(--text-dim)", fontSize: 10.5 }}>
-            {run?.start_time ? new Date(run.start_time).toLocaleDateString(undefined, { month: "short", day: "numeric" }) : ""}
+            {currentRun?.start_time ? new Date(currentRun.start_time).toLocaleDateString(undefined, { month: "short", day: "numeric" }) : ""}
           </div>
         </div>
 
-        {run?.status === "Failed" && run?.failure_stage && (
+        {currentRun?.end_time && (
+          <div>
+            <div style={{ color: "var(--text-dim)", fontSize: 10.5, textTransform: "uppercase", letterSpacing: 0.5 }}>Ended At</div>
+            <div style={{ fontWeight: 500, fontSize: 12, marginTop: 2 }}>
+              {new Date(currentRun.end_time).toLocaleTimeString(undefined, { hour: "2-digit", minute: "2-digit" })}
+            </div>
+            <div style={{ color: "var(--text-dim)", fontSize: 10.5 }}>
+              {new Date(currentRun.end_time).toLocaleDateString(undefined, { month: "short", day: "numeric" })}
+            </div>
+          </div>
+        )}
+
+        {currentRun?.status === "Failed" && currentRun?.failure_stage && (
           <div style={{ gridColumn: "1 / -1", borderTop: "1px solid var(--border)", paddingTop: 8, marginTop: 2 }}>
             <span style={{ color: "var(--danger)", fontSize: 12, fontWeight: 600 }}>
               Failure Stage:
             </span>{" "}
-            <span style={{ color: "var(--text)", fontSize: 12 }}>{run.failure_stage}</span>
+            <span style={{ color: "var(--text)", fontSize: 12 }}>{currentRun.failure_stage}</span>
+          </div>
+        )}
+
+        {isSuperAdmin && currentRun?.run_id && (
+          <div style={{
+            gridColumn: "1 / -1",
+            borderTop: "1px solid var(--border)",
+            paddingTop: 10,
+            marginTop: 2,
+            display: "flex",
+            alignItems: "center",
+            justifyContent: "space-between",
+            gap: 10,
+            flexWrap: "wrap",
+          }}>
+            <span style={{ color: "var(--text-dim)", fontSize: 11, fontWeight: 600, textTransform: "uppercase", letterSpacing: 0.5 }}>
+              Admin Status Override
+            </span>
+            <BotRunStatusActions
+              api={api}
+              run={currentRun}
+              isAdmin={isAdmin}
+              isSuperAdmin={isSuperAdmin}
+              allowReopen
+              onError={setError}
+              onUpdated={(updated) => {
+                setCurrentRun((prev) => ({ ...prev, ...updated }));
+                onStatusUpdated?.(updated);
+              }}
+            />
           </div>
         )}
       </div>
@@ -2872,7 +3256,7 @@ function RunLogsModal({ api, bot, run, onClose }) {
 }
 
 
-function LogsView({ api, context = null, onBackToReports }) {
+function LogsView({ api, context = null, onBackToReports, isAdmin = false, isSuperAdmin = false }) {
   const [rows, setRows] = useState([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
@@ -3128,6 +3512,8 @@ function LogsView({ api, context = null, onBackToReports }) {
           api={api}
           bot={{ bot_name: selectedRun.bot_name }}
           run={selectedRun}
+          isAdmin={isAdmin}
+          isSuperAdmin={isSuperAdmin}
           onClose={() => setSelectedRun(null)}
         />
       )}
@@ -3136,6 +3522,8 @@ function LogsView({ api, context = null, onBackToReports }) {
         <BotRunHistoryModal
           api={api}
           bot={{ bot_id: selectedBot.bot_id, bot_name: selectedBot.bot_name, client_name: selectedBot.client_name }}
+          isAdmin={isAdmin}
+          isSuperAdmin={isSuperAdmin}
           onClose={() => setSelectedBot(null)}
           onOpenLogs={(ctx) => setSelectedRun(ctx)}
         />
@@ -3143,7 +3531,7 @@ function LogsView({ api, context = null, onBackToReports }) {
     </>
   );
 }
-function BotRunHistoryModal({ api, bot, onClose, onOpenLogs }) {
+function BotRunHistoryModal({ api, bot, isAdmin = false, isSuperAdmin = false, onStatusUpdated, onClose, onOpenLogs }) {
   const [runs, setRuns] = useState([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
@@ -3180,8 +3568,36 @@ function BotRunHistoryModal({ api, bot, onClose, onOpenLogs }) {
 
   return (
     <>
-      <Modal title={`${bot.bot_name} — run history`} onClose={onClose} width={720}>
+      <Modal title={`${bot.bot_name} — run history`} onClose={onClose} width={isSuperAdmin ? 880 : 720}>
         <ErrorBanner message={error} onDismiss={() => setError("")} />
+
+        <div style={{
+          display: "flex",
+          gap: 16,
+          flexWrap: "wrap",
+          alignItems: "center",
+          background: "var(--surface-2, #1e293b)",
+          border: "1px solid var(--border)",
+          borderRadius: 8,
+          padding: "9px 14px",
+          marginBottom: 14,
+          fontSize: 12.5,
+        }}>
+          <div>
+            <span style={{ color: "var(--text-muted)" }}>History Recorded Since: </span>
+            <strong style={{ color: "var(--text)" }}>{bot.history_start_date ? formatDate(bot.history_start_date) : "—"}</strong>
+          </div>
+          <div>
+            <span style={{ color: "var(--text-muted)" }}>Bot Age: </span>
+            <strong style={{ color: "var(--accent)" }}>{bot.bot_age_human || "—"}</strong>
+          </div>
+          {bot.is_under_maintenance && (
+            <div style={{ marginLeft: "auto" }}>
+              <Badge tone="warning">⚠️ Under Maintenance</Badge>
+            </div>
+          )}
+        </div>
+
         <div className="hb-scroll" style={{ maxHeight: 440, overflowY: "auto" }}>
           <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 13 }}>
             <thead>
@@ -3190,7 +3606,7 @@ function BotRunHistoryModal({ api, bot, onClose, onOpenLogs }) {
                 <th style={{ textAlign: "left", padding: "8px 10px", color: "var(--text-muted)", fontWeight: 500, fontSize: 11.5 }}>Status</th>
                 <th style={{ textAlign: "right", padding: "8px 10px", color: "var(--text-muted)", fontWeight: 500, fontSize: 11.5 }}>Duration</th>
                 <th style={{ textAlign: "right", padding: "8px 10px", color: "var(--text-muted)", fontWeight: 500, fontSize: 11.5 }}>Transactions</th>
-                <th style={{ textAlign: "right", padding: "8px 10px", color: "var(--text-muted)", fontWeight: 500, fontSize: 11.5 }}>Logs</th>
+                <th style={{ textAlign: "right", padding: "8px 10px", color: "var(--text-muted)", fontWeight: 500, fontSize: 11.5 }}>{isSuperAdmin ? "Actions & Logs" : "Logs"}</th>
               </tr>
             </thead>
             <tbody>
@@ -3224,27 +3640,44 @@ function BotRunHistoryModal({ api, bot, onClose, onOpenLogs }) {
                       ) : "—"}
                     </td>
                     <td style={{ padding: "9px 10px", textAlign: "right" }}>
-                      {(r.status === "Success" || r.status === "Failed") ? (
-                        <Button
-                          variant="ghost"
-                          onClick={(e) => {
-                            e.stopPropagation();
-                            onOpenLogs?.({
-                              run_id: r.run_id,
-                              bot_id: bot.bot_id,
-                              bot_name: bot.bot_name,
-                              client_name: bot.client_name,
-                              status: r.status,
-                              start_time: r.start_time,
-                            });
-                            onClose();
-                          }}
-                        >
-                          <FileText size={12} /> Logs
-                        </Button>
-                      ) : (
-                        <span style={{ color: "var(--text-dim)" }}>—</span>
-                      )}
+                      <div style={{ display: "inline-flex", alignItems: "center", justifyContent: "flex-end", gap: 6, flexWrap: "wrap" }}>
+                        {isSuperAdmin && (
+                          <BotRunStatusActions
+                            api={api}
+                            run={r}
+                            isAdmin={isAdmin}
+                            isSuperAdmin={isSuperAdmin}
+                            compact
+                            allowReopen
+                            onError={setError}
+                            onUpdated={(updated) => {
+                              setRuns((prev) => prev.map((item) => (item.run_id === r.run_id ? { ...item, ...updated } : item)));
+                              onStatusUpdated?.(updated);
+                            }}
+                          />
+                        )}
+                        {(r.status === "Success" || r.status === "Failed") ? (
+                          <Button
+                            variant="ghost"
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              onOpenLogs?.({
+                                run_id: r.run_id,
+                                bot_id: bot.bot_id,
+                                bot_name: bot.bot_name,
+                                client_name: bot.client_name,
+                                status: r.status,
+                                start_time: r.start_time,
+                              });
+                              onClose();
+                            }}
+                          >
+                            <FileText size={12} /> Logs
+                          </Button>
+                        ) : !isAdmin ? (
+                          <span style={{ color: "var(--text-dim)" }}>—</span>
+                        ) : null}
+                      </div>
                     </td>
                   </tr>
                 );
@@ -3259,6 +3692,11 @@ function BotRunHistoryModal({ api, bot, onClose, onOpenLogs }) {
           api={api}
           bot={bot}
           run={selectedRun}
+          isAdmin={isAdmin}
+          onStatusUpdated={(updated) => {
+            setRuns((prev) => prev.map((item) => (item.run_id === updated.run_id ? { ...item, ...updated } : item)));
+            onStatusUpdated?.(updated);
+          }}
           onClose={() => setSelectedRun(null)}
         />
       )}
@@ -4107,9 +4545,9 @@ function MessagesView({ api, role, session, liveEvents }) {
                         (c.isInternal ? "Internal team discussion" : "Start a conversation")}
                     </span>
 
-                    {c.unread > 0 && (
+                    {/* {c.unread > 0 && (
                       <span className="hb-chat-ig-dot" title={`${c.unread} unread`} />
-                    )}
+                    )} */}
                   </div>
                 </div>
               </button>
@@ -4252,74 +4690,234 @@ function MessagesView({ api, role, session, liveEvents }) {
   );
 }
 
-function ReportsView({ api, onOpenLogs, isAdmin }) {
+function ReportsView({ api, onOpenLogs, isAdmin, isSuperAdmin = false }) {
   const [rows, setRows] = useState([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
   const [selectedBot, setSelectedBot] = useState(null);
+  const [clientId, setClientId] = useState(null);
   const [department, setDepartment] = useState(null);
   const [period, setPeriod] = useState("day");
   const [search, setSearch] = useState("");
+  const [filterMode, setFilterMode] = useState("running"); // "running" (default today running) | "all" | "never_run"
 
+  const clientOptions = useClientOptions(api);
   const departmentOptions = useDepartmentOptions(api);
-  const filterGroups = useMemo(() => [
-    { key: "department", icon: Building2, label: "Department", value: department, onChange: setDepartment, options: departmentOptions },
-    { key: "period", icon: CalendarClock, label: "Period", value: period, onChange: (v) => setPeriod(v || "day"), options: PERIOD_OPTIONS, isActive: (v) => v && v !== "day" },
-  ], [department, departmentOptions, period]);
+
+  const filterGroups = useMemo(() => {
+    const groups = [];
+    if (isAdmin) {
+      groups.push({
+        key: "client",
+        icon: Users,
+        label: "Client",
+        value: clientId,
+        onChange: setClientId,
+        options: clientOptions,
+      });
+    }
+    groups.push({
+      key: "department",
+      icon: Building2,
+      label: "Department",
+      value: department,
+      onChange: setDepartment,
+      options: departmentOptions,
+    });
+    groups.push({
+      key: "period",
+      icon: CalendarClock,
+      label: "Period",
+      value: period,
+      onChange: (v) => setPeriod(v || "day"),
+      options: PERIOD_OPTIONS,
+      isActive: (v) => v && v !== "day",
+    });
+    return groups;
+  }, [isAdmin, clientId, clientOptions, department, departmentOptions, period]);
+
+  const loadSummary = useCallback(async () => {
+    setLoading(true);
+    setError("");
+    try {
+      const params = new URLSearchParams();
+      if (isAdmin && clientId) params.set("client_id", clientId);
+      if (department) params.set("department", department);
+      if (period && period !== "all") params.set("period", period);
+      const qs = params.toString();
+      const res = await api(`/dashboard/bot-summary${qs ? `?${qs}` : ""}`);
+      setRows(res || []);
+    } catch (err) {
+      setError(err.message);
+    } finally {
+      setLoading(false);
+    }
+  }, [api, isAdmin, clientId, department, period]);
 
   useEffect(() => {
-    (async () => {
-      setLoading(true);
-      setError("");
-      try {
-        const params = new URLSearchParams();
-        if (department) params.set("department", department);
-        if (period && period !== "all") params.set("period", period);
-        const qs = params.toString();
-        const res = await api(`/dashboard/bot-summary${qs ? `?${qs}` : ""}`);
-        setRows(res || []);
-      } catch (err) {
-        setError(err.message);
-      } finally {
-        setLoading(false);
-      }
-    })();
-  }, [api, department, period]);
+    loadSummary();
+  }, [loadSummary]);
+
+  const runningCount = useMemo(() => rows.filter((r) => (r.total_runs || 0) > 0).length, [rows]);
+  const neverRunCount = useMemo(() => rows.filter((r) => r.has_never_run || (r.lifetime_runs === 0)).length, [rows]);
+  const totalCount = rows.length;
 
   const filteredRows = useMemo(() => {
+    let list = rows;
+    if (isAdmin && clientId) {
+      const selectedClient = clientOptions.find((c) => String(c.value) === String(clientId));
+      const clientLabel = selectedClient?.label?.toLowerCase();
+      list = list.filter((r) =>
+        (r.client_id != null && String(r.client_id) === String(clientId)) ||
+        (clientLabel && (r.client_name || "").toLowerCase() === clientLabel)
+      );
+    }
     const q = search.trim().toLowerCase();
-    if (!q) return rows;
-    return rows.filter((r) => `${r.bot_name || ""} ${r.client_name || ""} ${r.department || ""}`.toLowerCase().includes(q));
-  }, [rows, search]);
+    if (q) {
+      list = list.filter((r) =>
+        `${r.bot_name || ""} ${r.bot_code || ""} ${r.client_name || ""} ${r.department || ""}`.toLowerCase().includes(q)
+      );
+    }
+    if (filterMode === "running") {
+      list = list.filter((r) => (r.total_runs || 0) > 0);
+    } else if (filterMode === "never_run") {
+      list = list.filter((r) => r.has_never_run || (r.lifetime_runs === 0));
+    }
+    return [...list].sort((a, b) =>
+      (a.bot_name || "").localeCompare(b.bot_name || "", undefined, { sensitivity: "base" })
+    );
+  }, [rows, search, isAdmin, clientId, clientOptions, filterMode]);
 
   return (
     <div>
       <ErrorBanner message={error} onDismiss={() => setError("")} />
 
-      <div style={{ display: "flex", flexWrap: "wrap", alignItems: "center", gap: 8, padding: 10, marginBottom: 14, background: "var(--surface)", border: "1px solid var(--border)", borderRadius: 12 }}>
-        <div style={{ position: "relative", flex: "1 1 260px", minWidth: 200 }}>
-          <Search size={14} style={{ position: "absolute", left: 11, top: "50%", transform: "translateY(-50%)", color: "var(--text-dim)", pointerEvents: "none" }} />
-          <input
-            value={search}
-            onChange={(e) => setSearch(e.target.value)}
-            placeholder="Search bot, client or department"
-            aria-label="Search bot, client or department"
-            style={{
-              width: "100%", boxSizing: "border-box", padding: "9px 12px 9px 34px",
-              background: "var(--surface-2)", color: "var(--text)", border: "1px solid var(--border)",
-              borderRadius: 9, outline: "none", fontSize: 13,
-            }}
-            onFocus={(e) => { e.currentTarget.style.borderColor = "var(--accent)"; }}
-            onBlur={(e) => { e.currentTarget.style.borderColor = "var(--border)"; }}
-          />
+      {/* Concise Integrated Filter & Search Toolbar */}
+      <div style={{
+        display: "flex", flexWrap: "wrap", alignItems: "center", justifyContent: "space-between",
+        gap: 10, padding: "8px 12px", marginBottom: 14,
+        background: "var(--surface)", border: "1px solid var(--border)", borderRadius: 10,
+      }}>
+        {/* Left: Search input + Filter Popover */}
+        <div style={{ display: "flex", alignItems: "center", gap: 8, flex: "1 1 300px" }}>
+          <div style={{ position: "relative", flex: 1, minWidth: 200 }}>
+            <Search size={14} style={{ position: "absolute", left: 10, top: "50%", transform: "translateY(-50%)", color: "var(--text-dim)", pointerEvents: "none" }} />
+            <input
+              value={search}
+              onChange={(e) => setSearch(e.target.value)}
+              placeholder="Search bot, client or department…"
+              aria-label="Search bot, client or department"
+              style={{
+                width: "100%", boxSizing: "border-box", padding: "7px 10px 7px 32px",
+                background: "var(--surface-2)", color: "var(--text)", border: "1px solid var(--border)",
+                borderRadius: 7, outline: "none", fontSize: 12.5,
+              }}
+              onFocus={(e) => { e.currentTarget.style.borderColor = "var(--accent)"; }}
+              onBlur={(e) => { e.currentTarget.style.borderColor = "var(--border)"; }}
+            />
+          </div>
+          <FilterPopover groups={filterGroups} />
+          <ActiveFilterChips groups={filterGroups} />
         </div>
-        <FilterPopover groups={filterGroups} />
-        <ActiveFilterChips groups={filterGroups} />
+
+        {/* Right: Concise Status Segment Pills */}
+        <div style={{
+          display: "inline-flex",
+          alignItems: "center",
+          background: "var(--surface-2)",
+          border: "1px solid var(--border)",
+          borderRadius: 8,
+          padding: 2,
+          gap: 2,
+        }}>
+          <button
+            type="button"
+            onClick={() => setFilterMode("running")}
+            style={{
+              padding: "5px 11px",
+              borderRadius: 6,
+              border: "none",
+              background: filterMode === "running" ? "var(--accent)" : "transparent",
+              color: filterMode === "running" ? "#051319" : "var(--text-muted)",
+              fontSize: 12,
+              fontWeight: filterMode === "running" ? 700 : 500,
+              cursor: "pointer",
+              transition: "all .15s ease",
+              display: "inline-flex",
+              alignItems: "center",
+              gap: 5,
+            }}
+            title="Bots that executed runs today"
+          >
+            <span style={{ width: 6, height: 6, borderRadius: "50%", background: filterMode === "running" ? "#051319" : "var(--success)" }} />
+            <span>Running Today ({runningCount})</span>
+          </button>
+
+          <button
+            type="button"
+            onClick={() => setFilterMode("all")}
+            style={{
+              padding: "5px 11px",
+              borderRadius: 6,
+              border: "none",
+              background: filterMode === "all" ? "var(--accent)" : "transparent",
+              color: filterMode === "all" ? "#051319" : "var(--text-muted)",
+              fontSize: 12,
+              fontWeight: filterMode === "all" ? 700 : 500,
+              cursor: "pointer",
+              transition: "all .15s ease",
+            }}
+            title="All configured bots in the fleet"
+          >
+            <span>All Bots ({totalCount})</span>
+          </button>
+
+          <button
+            type="button"
+            onClick={() => setFilterMode("never_run")}
+            style={{
+              padding: "5px 11px",
+              borderRadius: 6,
+              border: "none",
+              background: filterMode === "never_run" ? "var(--accent)" : "transparent",
+              color: filterMode === "never_run" ? "#051319" : "var(--text-muted)",
+              fontSize: 12,
+              fontWeight: filterMode === "never_run" ? 700 : 500,
+              cursor: "pointer",
+              transition: "all .15s ease",
+              display: "inline-flex",
+              alignItems: "center",
+              gap: 5,
+            }}
+            title="Bots that have zero lifetime executions"
+          >
+            <span style={{ width: 6, height: 6, borderRadius: "50%", background: filterMode === "never_run" ? "#051319" : "var(--text-dim)" }} />
+            <span>Never Run ({neverRunCount})</span>
+          </button>
+        </div>
       </div>
 
-      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", marginBottom: 16, flexWrap: "wrap", gap: 10 }}>
-        <div style={{ color: "var(--text-muted)", fontSize: 13 }}>
-          {filteredRows.length} bot{filteredRows.length === 1 ? "" : "s"}{search.trim() && rows.length !== filteredRows.length ? ` of ${rows.length}` : ""} — click a row to see run history
+      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 12, flexWrap: "wrap", gap: 10 }}>
+        <div style={{ color: "var(--text-muted)", fontSize: 12.5 }}>
+          {filterMode === "running" && (
+            <span>
+              Showing <strong style={{ color: "var(--text)" }}>{filteredRows.length}</strong> active bot{filteredRows.length === 1 ? "" : "s"} running today
+              {search.trim() ? ` (filtered from ${runningCount})` : ` (out of ${totalCount} fleet bots)`}
+            </span>
+          )}
+          {filterMode === "all" && (
+            <span>
+              Showing <strong style={{ color: "var(--text)" }}>{filteredRows.length}</strong> bot{filteredRows.length === 1 ? "" : "s"}
+              {search.trim() && rows.length !== filteredRows.length ? ` of ${rows.length}` : ""}
+            </span>
+          )}
+          {filterMode === "never_run" && (
+            <span>
+              Showing <strong style={{ color: "var(--text)" }}>{filteredRows.length}</strong> bot{filteredRows.length === 1 ? "" : "s"} with <strong style={{ color: "var(--text-dim)" }}>0 lifetime runs</strong>
+              {search.trim() && neverRunCount !== filteredRows.length ? ` of ${neverRunCount}` : ""}
+            </span>
+          )}
+          {" — click a row to view run history"}
         </div>
       </div>
 
@@ -4331,6 +4929,8 @@ function ReportsView({ api, onOpenLogs, isAdmin }) {
                 <th style={{ textAlign: "left", padding: "11px 16px", color: "var(--text-muted)", fontWeight: 500, fontSize: 12 }}>Bot</th>
                 <th style={{ textAlign: "left", padding: "11px 16px", color: "var(--text-muted)", fontWeight: 500, fontSize: 12 }}>Client</th>
                 <th style={{ textAlign: "left", padding: "11px 16px", color: "var(--text-muted)", fontWeight: 500, fontSize: 12 }}>Department</th>
+                <th style={{ textAlign: "left", padding: "11px 16px", color: "var(--text-muted)", fontWeight: 500, fontSize: 12 }}>History Since</th>
+                <th style={{ textAlign: "left", padding: "11px 16px", color: "var(--text-muted)", fontWeight: 500, fontSize: 12 }}>Bot Age</th>
                 <th style={{ textAlign: "right", padding: "11px 16px", color: "var(--text-muted)", fontWeight: 500, fontSize: 12 }}>Total runs</th>
                 <th style={{ textAlign: "right", padding: "11px 16px", color: "var(--success)", fontWeight: 500, fontSize: 12 }}>Success</th>
                 <th style={{ textAlign: "right", padding: "11px 16px", color: "var(--danger)", fontWeight: 500, fontSize: 12 }}>Failed</th>
@@ -4339,11 +4939,55 @@ function ReportsView({ api, onOpenLogs, isAdmin }) {
             </thead>
             <tbody>
               {loading && (
-                <tr><td colSpan={7} style={{ padding: 24, textAlign: "center", color: "var(--text-dim)" }}>Loading…</td></tr>
+                <tr><td colSpan={9} style={{ padding: 24, textAlign: "center", color: "var(--text-dim)" }}>Loading…</td></tr>
               )}
               {!loading && filteredRows.length === 0 && (
-                <tr><td colSpan={7} style={{ padding: 24, textAlign: "center", color: "var(--text-dim)" }}>
-                  {rows.length === 0 ? "No bots yet." : "No bots match your search."}
+                <tr><td colSpan={9} style={{ padding: 28, textAlign: "center", color: "var(--text-dim)" }}>
+                  {filterMode === "running" && runningCount === 0 && rows.length > 0 ? (
+                    <div>
+                      <div style={{ marginBottom: 6 }}>No bots ran today yet.</div>
+                      <button
+                        type="button"
+                        onClick={() => setFilterMode("all")}
+                        style={{
+                          background: "var(--surface-2)",
+                          border: "1px solid var(--border)",
+                          color: "var(--accent)",
+                          borderRadius: 6,
+                          padding: "5px 12px",
+                          fontSize: 12,
+                          cursor: "pointer",
+                          fontWeight: 600,
+                        }}
+                      >
+                        View all {rows.length} bots
+                      </button>
+                    </div>
+                  ) : search.trim() ? (
+                    <div>
+                      <div style={{ marginBottom: 6 }}>No bots match "{search}".</div>
+                      <button
+                        type="button"
+                        onClick={() => setSearch("")}
+                        style={{
+                          background: "var(--surface-2)",
+                          border: "1px solid var(--border)",
+                          color: "var(--accent)",
+                          borderRadius: 6,
+                          padding: "4px 10px",
+                          fontSize: 11.5,
+                          cursor: "pointer",
+                          fontWeight: 600,
+                        }}
+                      >
+                        Clear Search
+                      </button>
+                    </div>
+                  ) : rows.length === 0 ? (
+                    "No bots yet."
+                  ) : (
+                    "No bots match your selected filters."
+                  )}
                 </td></tr>
               )}
               {filteredRows.map((r) => {
@@ -4356,9 +5000,46 @@ function ReportsView({ api, onOpenLogs, isAdmin }) {
                     onClick={() => setSelectedBot(r)}
                     style={{ borderBottom: "1px solid var(--border)", cursor: "pointer" }}
                   >
-                    <td style={{ padding: "11px 16px", fontWeight: 500 }}>{r.bot_name}</td>
+                    <td style={{ padding: "11px 16px", fontWeight: 500 }}>
+                      <div style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
+                        <span>{r.bot_name}</span>
+                        {r.is_under_maintenance && (
+                          <span style={{
+                            fontSize: 10.5,
+                            padding: "2px 7px",
+                            borderRadius: 999,
+                            fontWeight: 600,
+                            backgroundColor: "rgba(245, 158, 11, 0.15)",
+                            color: "#f59e0b",
+                            border: "1px solid rgba(245, 158, 11, 0.3)",
+                            display: "inline-flex",
+                            alignItems: "center",
+                            gap: 4
+                          }}>
+                            <span style={{ width: 6, height: 6, borderRadius: "50%", backgroundColor: "#f59e0b", display: "inline-block" }} />
+                            Under Maintenance
+                          </span>
+                        )}
+                      </div>
+                    </td>
                     <td style={{ padding: "11px 16px", color: "var(--text-muted)" }}>{r.client_name}</td>
                     <td style={{ padding: "11px 16px" }}>{r.department ? <Badge tone="accent">{r.department}</Badge> : <span style={{ color: "var(--text-dim)" }}>—</span>}</td>
+                    <td style={{ padding: "11px 16px", color: "var(--text-muted)", fontSize: 12.5, whiteSpace: "nowrap" }}>
+                      {r.history_start_date ? formatDate(r.history_start_date) : "—"}
+                    </td>
+                    <td style={{ padding: "11px 16px", fontWeight: 500, fontSize: 12.5, whiteSpace: "nowrap" }}>
+                      {r.has_never_run ? (
+                        <span style={{
+                          fontSize: 10.5, fontWeight: 700, padding: "2px 7px", borderRadius: 4,
+                          background: "var(--surface-3)", color: "var(--text-dim)", border: "1px solid var(--border)",
+                          letterSpacing: "0.02em", display: "inline-block",
+                        }}>
+                          Never Run
+                        </span>
+                      ) : (
+                        <span style={{ color: "var(--accent)" }}>{r.bot_age_human || "—"}</span>
+                      )}
+                    </td>
                     <td style={{ padding: "11px 16px", textAlign: "right", fontFamily: "var(--font-mono)" }}>{total}</td>
                     <td style={{ padding: "11px 16px", textAlign: "right", fontFamily: "var(--font-mono)", color: "var(--success)" }}>{r.success_count}</td>
                     <td style={{ padding: "11px 16px", textAlign: "right", fontFamily: "var(--font-mono)", color: r.failed_count > 0 ? "var(--danger)" : "var(--text-dim)" }}>{r.failed_count}</td>
@@ -4389,6 +5070,9 @@ function ReportsView({ api, onOpenLogs, isAdmin }) {
         <BotRunHistoryModal
           api={api}
           bot={selectedBot}
+          isAdmin={isAdmin}
+          isSuperAdmin={isSuperAdmin}
+          onStatusUpdated={loadSummary}
           onClose={() => setSelectedBot(null)}
           onOpenLogs={isAdmin ? onOpenLogs : null}   // client ku null → logs option hide
         />
@@ -4877,9 +5561,16 @@ function CrudView({ api, canWrite, config, initialClientFilter = null, rowContex
   const [loginModalFor, setLoginModalFor] = useState(null);
   const [refs, setRefs] = useState({}); // supporting lookups (e.g. clients for bots)
   const [clientFilterId, setClientFilterId] = useState(initialClientFilter);
+
+  useEffect(() => {
+    setClientFilterId(initialClientFilter);
+  }, [initialClientFilter]);
+
   const [department, setDepartment] = useState(null);
   const [machine, setMachine] = useState(null);
   const [search, setSearch] = useState("");
+  const [versionModalFor, setVersionModalFor] = useState(null);
+  const [detailModalRow, setDetailModalRow] = useState(null);
 
   const departmentOptions = useDepartmentOptions(api);
   const machineOptions = useMachineOptions(api);
@@ -4892,11 +5583,13 @@ function CrudView({ api, canWrite, config, initialClientFilter = null, rowContex
     return groups;
   }, [config, clientFilterId, clientOptions, department, departmentOptions, machine, machineOptions]);
 
+  const basePath = (config.listPath || "/").split("?")[0].replace(/\/?$/, "/");
+
   const load = useCallback(async () => {
     setLoading(true);
     setError("");
     try {
-      let path = config.listPath;
+      let path = basePath;
       const params = new URLSearchParams();
       if (config.showClientFilter && clientFilterId) params.set("client_id", clientFilterId);
       if (config.showDepartmentFilter && department) params.set("department", department);
@@ -4921,7 +5614,7 @@ function CrudView({ api, canWrite, config, initialClientFilter = null, rowContex
     } finally {
       setLoading(false);
     }
-  }, [api, config, clientFilterId, department, machine]);
+  }, [api, config, basePath, clientFilterId, department, machine]);
 
   useEffect(() => { load(); }, [load]);
 
@@ -4931,9 +5624,9 @@ function CrudView({ api, canWrite, config, initialClientFilter = null, rowContex
   const save = async (formData) => {
     try {
       if (modal.mode === "create") {
-        await api(config.listPath, { method: "POST", body: JSON.stringify(formData) });
+        await api(basePath, { method: "POST", body: JSON.stringify(formData) });
       } else {
-        await api(`${config.listPath}${modal.data[config.idField]}`, {
+        await api(`${basePath}${modal.data[config.idField]}`, {
           method: "PATCH", body: JSON.stringify(config.toUpdatePayload(formData)),
         });
       }
@@ -4948,7 +5641,7 @@ function CrudView({ api, canWrite, config, initialClientFilter = null, rowContex
     try {
       const id = confirmDelete[config.idField];
       const query = config.supportsSoftDelete && hardDelete ? "?hard=true" : "";
-      await api(`${config.listPath}${id}${query}`, { method: "DELETE" });
+      await api(`${basePath}${id}${query}`, { method: "DELETE" });
       setConfirmDelete(null);
       setHardDelete(false);
       load();
@@ -4958,15 +5651,52 @@ function CrudView({ api, canWrite, config, initialClientFilter = null, rowContex
     }
   };
 
-  // Client-side search across the record's searchable fields — instant
-  // filtering without another round trip while the count updates live.
+  // Client-side search across the record's searchable fields and supporting refs
+  // (e.g. typing a client name in the Bots view filters to that client's bots,
+  // and typing a bot name in the Clients view filters to that bot's client).
   const filteredRows = useMemo(() => {
-    if (!config.searchKeys || !search.trim()) return rows;
+    if (!search.trim()) return rows;
     const q = search.trim().toLowerCase();
-    return rows.filter((row) =>
-      config.searchKeys.some((k) => String(row[k] ?? "").toLowerCase().includes(q))
-    );
-  }, [rows, search, config.searchKeys]);
+    const searchKeys = config.searchKeys || [];
+    return rows.filter((row) => {
+      // 1. Direct field matches (bot_name, bot_code, client_name, email, department, etc.)
+      const directMatch = searchKeys.some((k) =>
+        String(row[k] ?? "").toLowerCase().includes(q)
+      );
+      if (directMatch) return true;
+
+      // 2. Ref-resolved Client lookup (for Bots table: match client_name, client email, or contact person)
+      if (row.client_id != null && refs?.clients?.length) {
+        const client = refs.clients.find((c) => String(c.client_id) === String(row.client_id));
+        if (client) {
+          const clientHaystack = `${client.client_name || ""} ${client.email || ""} ${client.contact_person || ""}`.toLowerCase();
+          if (clientHaystack.includes(q)) return true;
+        }
+      }
+
+      // 3. Ref-resolved Bot lookup (for Clients table: match bot_name, bot_code, email_identifier)
+      if (row.client_id != null && refs?.bots?.length) {
+        const hasMatchingBot = refs.bots.some((b) =>
+          String(b.client_id) === String(row.client_id) &&
+          `${b.bot_name || ""} ${b.bot_code || ""} ${b.email_identifier || ""}`.toLowerCase().includes(q)
+        );
+        if (hasMatchingBot) return true;
+      }
+
+      return false;
+    });
+  }, [rows, search, config.searchKeys, refs]);
+
+  const sortedRows = useMemo(() => {
+    return [...filteredRows].sort((a, b) => {
+      const nameA = String(a.client_name || a.bot_name || a.name || "").trim();
+      const nameB = String(b.client_name || b.bot_name || b.name || "").trim();
+      if (!nameA && !nameB) return 0;
+      if (!nameA) return 1;
+      if (!nameB) return -1;
+      return nameA.localeCompare(nameB, undefined, { sensitivity: "base" });
+    });
+  }, [filteredRows]);
 
   return (
     <div>
@@ -4975,8 +5705,8 @@ function CrudView({ api, canWrite, config, initialClientFilter = null, rowContex
       <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", marginBottom: 16, flexWrap: "wrap", gap: 10 }}>
         <div style={{ display: "flex", alignItems: "center", gap: 12, flexWrap: "wrap" }}>
           <div style={{ color: "var(--text-muted)", fontSize: 13, paddingTop: 8, whiteSpace: "nowrap" }}>
-            {filteredRows.length} {config.label.toLowerCase()}
-            {search.trim() && rows.length !== filteredRows.length ? ` of ${rows.length}` : ""}
+            {sortedRows.length} {config.label.toLowerCase()}
+            {search.trim() && rows.length !== sortedRows.length ? ` of ${rows.length}` : ""}
           </div>
           {config.searchKeys && (
             <SearchBar value={search} onChange={setSearch} placeholder={config.searchPlaceholder || `Search ${config.label.toLowerCase()}…`} />
@@ -5012,20 +5742,36 @@ function CrudView({ api, canWrite, config, initialClientFilter = null, rowContex
               {loading && (
                 <tr><td colSpan={config.columns.length + 1} style={{ padding: 24, textAlign: "center", color: "var(--text-dim)" }}>Loading…</td></tr>
               )}
-              {!loading && filteredRows.length === 0 && (
+              {!loading && sortedRows.length === 0 && (
                 <tr><td colSpan={config.columns.length + 1} style={{ padding: 24, textAlign: "center", color: "var(--text-dim)" }}>
                   {rows.length === 0 ? "Nothing here yet." : "No matches for your search."}
                 </td></tr>
               )}
-              {filteredRows.map((row) => (
-                <tr key={row[config.idField]} className="hb-row-hover" style={{ borderBottom: "1px solid var(--border)" }}>
+              {sortedRows.map((row) => (
+                <tr
+                  key={row[config.idField]}
+                  className="hb-row-hover"
+                  onClick={config.renderDetailModal ? () => setDetailModalRow(row) : undefined}
+                  style={{
+                    borderBottom: "1px solid var(--border)",
+                    cursor: config.renderDetailModal ? "pointer" : undefined,
+                  }}
+                >
                   {config.columns.map((c) => (
                     <td key={c.key} style={{ padding: "11px 16px", verticalAlign: "middle" }}>
-                      {c.render ? c.render(row, rowContext ? { ...refs, ...rowContext } : refs) : row[c.key] ?? "—"}
+                      {c.render
+                        ? c.render(row, {
+                          ...(rowContext ? { ...refs, ...rowContext } : refs),
+                          openVersionHistory: setVersionModalFor,
+                        })
+                        : row[c.key] ?? "—"}
                     </td>
                   ))}
                   {canWrite && (
-                    <td style={{ padding: "11px 16px", textAlign: "right", whiteSpace: "nowrap" }}>
+                    <td
+                      onClick={(e) => e.stopPropagation()}
+                      style={{ padding: "11px 16px", textAlign: "right", whiteSpace: "nowrap" }}
+                    >
                       {config.showCreateLogin && (
                         <button onClick={() => setLoginModalFor(row)} title="Create login" style={{ background: "none", border: "none", color: "var(--accent)", padding: 4 }}>
                           <KeyRound size={14} />
@@ -5084,6 +5830,30 @@ function CrudView({ api, canWrite, config, initialClientFilter = null, rowContex
       {loginModalFor && (
         <CreateLoginModal api={api} client={loginModalFor} onClose={() => setLoginModalFor(null)} />
       )}
+      {versionModalFor && (
+        <BotVersionHistoryModal
+          api={api}
+          bot={versionModalFor}
+          canWrite={canWrite}
+          onClose={() => setVersionModalFor(null)}
+          Modal={Modal}
+          Button={Button}
+          Field={Field}
+          ErrorBanner={ErrorBanner}
+          inputStyle={inputStyle}
+          timeAgo={timeAgo}
+        />
+      )}
+      {detailModalRow && config.renderDetailModal && config.renderDetailModal(
+        detailModalRow,
+        {
+          ...(rowContext ? { ...refs, ...rowContext } : refs),
+          openVersionHistory: setVersionModalFor,
+          canWrite,
+          openEdit,
+        },
+        () => setDetailModalRow(null)
+      )}
     </div>
   );
 }
@@ -5091,6 +5861,7 @@ function CrudView({ api, canWrite, config, initialClientFilter = null, rowContex
 function CreateLoginModal({ api, client, onClose }) {
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
+  const [department, setDepartment] = useState("");
   const [error, setError] = useState("");
   const [success, setSuccess] = useState(false);
   const [loading, setLoading] = useState(false);
@@ -5103,7 +5874,11 @@ function CreateLoginModal({ api, client, onClose }) {
       await api("/auth/register", {
         method: "POST",
         body: JSON.stringify({
-          email, password, role: "client", client_id: client.client_id,
+          email,
+          password,
+          role: "client",
+          client_id: client.client_id,
+          department: department.trim() || undefined,
         }),
       });
       setSuccess(true);
@@ -5131,6 +5906,7 @@ function CreateLoginModal({ api, client, onClose }) {
           <div style={{ background: "var(--surface-2)", border: "1px solid var(--border)", borderRadius: 8, padding: 12, fontFamily: "var(--font-mono)", fontSize: 12.5, marginBottom: 16 }}>
             <div>email: {email}</div>
             <div>password: {password}</div>
+            {department && <div>department: {department}</div>}
           </div>
           <Button onClick={onClose} style={{ width: "100%", justifyContent: "center" }}>Done</Button>
         </div>
@@ -5142,6 +5918,15 @@ function CreateLoginModal({ api, client, onClose }) {
           </div>
           <Field label="Login email">
             <input style={inputStyle} type="email" required value={email} onChange={(e) => setEmail(e.target.value)} />
+          </Field>
+          <Field label="Department (Optional)">
+            <input
+              style={inputStyle}
+              type="text"
+              value={department}
+              onChange={(e) => setDepartment(e.target.value)}
+              placeholder="e.g. Finance, Accounting, Ops"
+            />
           </Field>
           <Field label="Temporary password">
             <PasswordField
@@ -5174,7 +5959,11 @@ function FormModal({ title, fields, initial, refs, onCancel, onSave }) {
             {f.type === "select" ? (
               <select style={inputStyle} value={form[f.key] ?? ""} onChange={(e) => set(f.key, f.numeric ? Number(e.target.value) : e.target.value)}>
                 <option value="">Select…</option>
-                {(f.optionsFrom ? refs[f.optionsFrom] : f.options || []).map((opt) => (
+                {(
+                  f.optionsFrom
+                    ? (refs?.[f.optionsFrom] || [])
+                    : (f.options || [])
+                ).map((opt) => (
                   <option key={opt.value ?? opt[f.optionValueKey]} value={opt.value ?? opt[f.optionValueKey]}>
                     {opt.label ?? opt[f.optionLabelKey]}
                   </option>
@@ -5265,15 +6054,12 @@ function ClientTimezoneCell({ timezone }) {
   }).format(now);
 
   return (
-    <div className="hb-client-tz" title={timezone}>
+    <div className="hb-client-tz" title={meta.relation ? `${timezone} (${meta.relation})` : timezone}>
       <div className="hb-client-tz-top">
         <span className="hb-client-tz-zone">{meta.zoneName}</span>
         <span className="hb-client-tz-live">●</span>
       </div>
-      {/* <span className="hb-client-tz-time"></span>  */}
-      <span className="hb-client-tz-diff">
-        {meta.relation}
-      </span>
+      <span className="hb-client-tz-time">{clientTime}</span>
     </div>
   );
 }
@@ -5303,7 +6089,7 @@ function TimezoneClock({ label, timezone }) {
   );
 }
 
-function StayAheadClocks({ isDrawer = false }) {
+function StayAheadClocks({ isDrawer = false, onOpenPlanner }) {
   const [now, setNow] = useState(new Date());
 
   useEffect(() => {
@@ -5314,8 +6100,8 @@ function StayAheadClocks({ isDrawer = false }) {
     return () => clearInterval(timer);
   }, []);
 
-  const stayAheadUSTime = new Intl.DateTimeFormat("en-US", {
-    timeZone: "America/Los_Angeles",
+  const stayAheadESTTime = new Intl.DateTimeFormat("en-US", {
+    timeZone: "America/New_York",
     hour: "2-digit",
     minute: "2-digit",
     second: isDrawer ? undefined : "2-digit",
@@ -5331,17 +6117,64 @@ function StayAheadClocks({ isDrawer = false }) {
   }).format(now);
 
   return (
-    <div className={`hb-topbar-clocks${isDrawer ? " hb-drawer-clocks" : ""}`}>
+    <div
+      className={`hb-topbar-clocks${isDrawer ? " hb-drawer-clocks" : ""}`}
+      onClick={onOpenPlanner}
+      role={onOpenPlanner ? "button" : undefined}
+      tabIndex={onOpenPlanner ? 0 : undefined}
+      style={{ cursor: onOpenPlanner ? "pointer" : "default" }}
+      title={onOpenPlanner ? "Click to open Timezone Mapping & Meeting Planner" : undefined}
+    >
       <div className="hb-topbar-clock-item">
-        <div className="hb-topbar-clock-label">StayAhead US</div>
-        <div className="hb-topbar-clock-time">{stayAheadUSTime}</div>
+        <div className="hb-topbar-clock-label">StayAhead US (EST)</div>
+        <div className="hb-topbar-clock-time">{stayAheadESTTime}</div>
       </div>
 
       <div className="hb-topbar-clock-divider" />
 
       <div className="hb-topbar-clock-item">
-        <div className="hb-topbar-clock-label">StayAhead India</div>
+        <div className="hb-topbar-clock-label">StayAhead India (IST)</div>
         <div className="hb-topbar-clock-time">{stayAheadIndiaTime}</div>
+      </div>
+
+      {onOpenPlanner && !isDrawer && (
+        <span style={{
+          marginLeft: 6, fontSize: 10, fontWeight: 700,
+          background: "var(--accent-dim)", color: "var(--accent)",
+          padding: "2px 7px", borderRadius: 999, border: "1px solid var(--accent)",
+          letterSpacing: "0.04em",
+        }}>
+          Planner
+        </span>
+      )}
+    </div>
+  );
+}
+
+function CrudDetailItem({ label, children, mono = false, full = false }) {
+  return (
+    <div style={{ gridColumn: full ? "1 / -1" : undefined, minWidth: 0 }}>
+      <div style={{
+        fontSize: 11,
+        fontWeight: 700,
+        textTransform: "uppercase",
+        letterSpacing: "0.06em",
+        color: "var(--text-dim)",
+        marginBottom: 4,
+      }}>
+        {label}
+      </div>
+      <div style={{
+        fontSize: 13.5,
+        color: "var(--text)",
+        fontFamily: mono ? "var(--font-mono)" : undefined,
+        wordBreak: "break-word",
+        background: "var(--surface-2)",
+        border: "1px solid var(--border)",
+        borderRadius: 8,
+        padding: "8px 10px",
+      }}>
+        {children ?? "—"}
       </div>
     </div>
   );
@@ -5351,8 +6184,9 @@ const clientConfig = {
   label: "Clients", singular: "Client", idField: "client_id", listPath: "/clients/",
   supportsSoftDelete: true,
   showCreateLogin: true,
-  searchKeys: ["client_name", "contact_person", "email", "email_domains"],
-  searchPlaceholder: "Search clients…",
+  searchKeys: ["client_name", "contact_person", "email", "email_domains", "timezone"],
+  searchPlaceholder: "Search clients or bots…",
+  refs: [{ key: "bots", path: "/bots/" }],
   columns: [
     { key: "client_name", label: "Name" },
 
@@ -5372,7 +6206,10 @@ const clientConfig = {
       render: (r, refs) => (
         <button
           type="button"
-          onClick={() => refs?.onBotCountClick && refs.onBotCountClick(r.client_id)}
+          onClick={(e) => {
+            e.stopPropagation();
+            refs?.onBotCountClick && refs.onBotCountClick(r.client_id);
+          }}
           style={{
             display: "inline-flex",
             alignItems: "center",
@@ -5413,6 +6250,56 @@ const clientConfig = {
       render: (r) => <ClientTimezoneCell timezone={r.timezone} />,
     },
   ],
+  renderDetailModal: (row, ctx, onClose) => (
+    <Modal title={row.client_name || `Client #${row.client_id}`} onClose={onClose} width={520}>
+      <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 10, marginBottom: 14 }}>
+        <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+          <span style={{
+            fontFamily: "var(--font-mono)",
+            fontSize: 12,
+            fontWeight: 700,
+            padding: "2px 8px",
+            borderRadius: 6,
+            background: "var(--surface-2)",
+            border: "1px solid var(--border)",
+            color: "var(--text-muted)",
+          }}>
+            ID #{row.client_id}
+          </span>
+          <Badge tone={row.status === "Active" ? "success" : "muted"}>{row.status || "Active"}</Badge>
+        </div>
+        {ctx?.onBotCountClick && (
+          <Button
+            variant="ghost"
+            onClick={() => { onClose(); ctx.onBotCountClick(row.client_id); }}
+            style={{ fontSize: 12 }}
+          >
+            View Bots ({row.bot_count ?? 0}) →
+          </Button>
+        )}
+      </div>
+      <div style={{ display: "grid", gridTemplateColumns: "repeat(2, minmax(0, 1fr))", gap: 10 }}>
+        <CrudDetailItem label="Client Name">{row.client_name || "—"}</CrudDetailItem>
+        <CrudDetailItem label="Contact Person">{row.contact_person || "—"}</CrudDetailItem>
+        <CrudDetailItem label="Email" mono>{row.email || "—"}</CrudDetailItem>
+        <CrudDetailItem label="Email Domains" mono>{row.email_domains || "—"}</CrudDetailItem>
+        <CrudDetailItem label="Timezone" mono>{row.timezone || "America/New_York"}</CrudDetailItem>
+        <CrudDetailItem label="Local Time">
+          <ClientTimezoneCell timezone={row.timezone} />
+        </CrudDetailItem>
+        <CrudDetailItem label="Bot Count" mono>{row.bot_count ?? 0}</CrudDetailItem>
+        <CrudDetailItem label="Status">{row.status || "Active"}</CrudDetailItem>
+      </div>
+      <div style={{ display: "flex", justifyContent: "flex-end", gap: 8, marginTop: 18 }}>
+        {ctx?.canWrite && ctx?.openEdit && (
+          <Button variant="ghost" onClick={() => { onClose(); ctx.openEdit(row); }}>
+            Edit
+          </Button>
+        )}
+        <Button onClick={onClose}>Close</Button>
+      </div>
+    </Modal>
+  ),
   formFields: [
     {
       key: "client_name",
@@ -5499,8 +6386,8 @@ const botConfig = {
   showClientFilter: true,
   showDepartmentFilter: true,
   showMachineFilter: true,
-  searchKeys: ["bot_name", "email_identifier", "machine_name", "owner"],
-  searchPlaceholder: "Search bots…",
+  searchKeys: ["bot_name", "bot_code", "client_name", "email_identifier", "department", "machine_name", "owner"],
+  searchPlaceholder: "Search bots or clients…",
   refs: [{ key: "clients", path: "/clients/" }, { key: "departments", path: "/departments/" }],
   columns: [
     { key: "bot_name", label: "Name" },
@@ -5509,8 +6396,91 @@ const botConfig = {
     { key: "department", label: "Department", render: (r) => r.department ? <Badge tone="accent">{r.department}</Badge> : <span style={{ color: "var(--text-dim)" }}>—</span> },
     { key: "machine_name", label: "Machine", render: (r) => r.machine_name ? <span style={{ fontFamily: "var(--font-mono)", fontSize: 12.5, color: "var(--text-muted)" }}>{r.machine_name}</span> : <span style={{ color: "var(--text-dim)" }}>—</span> },
     { key: "manual_process_rate", label: "Manual Process Rate", render: (r) => <span style={{ fontFamily: "var(--font-mono)", fontSize: 12.5, color: "var(--text-muted)" }}>{r.transaction_batch_size} acc = {r.transaction_batch_hours}h</span> },
+    {
+      key: "current_version",
+      label: "Version",
+      render: (r, refs) => (
+        <button
+          type="button"
+          onClick={(e) => {
+            e.stopPropagation();
+            refs?.openVersionHistory && refs.openVersionHistory(r);
+          }}
+          style={{
+            display: "inline-flex", alignItems: "center", gap: 6,
+            padding: "5px 9px", borderRadius: 8,
+            background: "var(--surface-2)", border: "1px solid var(--border)",
+            color: "var(--accent)", fontFamily: "var(--font-mono)", fontSize: 12.5,
+            fontWeight: 700, cursor: "pointer",
+          }}
+          title="View version history"
+        >
+          <Tag size={12} />
+          <span>{r.current_version || "—"}</span>
+        </button>
+      ),
+    },
     { key: "status", label: "Status", render: (r) => <Badge tone={r.status === "Active" ? "success" : "muted"}>{r.status}</Badge> },
   ],
+  renderDetailModal: (row, ctx, onClose) => {
+    const clientName = ctx?.clients?.find((c) => c.client_id === row.client_id)?.client_name || (row.client_id ? `#${row.client_id}` : "—");
+    const createdDate = row.created_at ? new Date(row.created_at).toLocaleDateString() : "—";
+    const ageLabel = row.age_days != null ? `${row.age_days} day${row.age_days === 1 ? "" : "s"}` : "—";
+    const rateLabel = `${row.transaction_batch_size ?? 10} acc = ${row.transaction_batch_hours ?? 1}h`;
+    return (
+      <Modal title={row.bot_name || `Bot #${row.bot_id}`} onClose={onClose} width={540}>
+        <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 10, marginBottom: 14, flexWrap: "wrap" }}>
+          <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+            {row.bot_code && (
+              <span style={{
+                fontFamily: "var(--font-mono)",
+                fontSize: 12,
+                fontWeight: 700,
+                padding: "2px 8px",
+                borderRadius: 6,
+                background: "var(--surface-2)",
+                border: "1px solid var(--border)",
+                color: "var(--accent)",
+              }}>
+                {row.bot_code}
+              </span>
+            )}
+            <Badge tone={row.status === "Active" ? "success" : "muted"}>{row.status || "Active"}</Badge>
+          </div>
+          {ctx?.openVersionHistory && (
+            <Button
+              variant="ghost"
+              onClick={() => { onClose(); ctx.openVersionHistory(row); }}
+              style={{ fontSize: 12 }}
+            >
+              Version {row.current_version || "History"} →
+            </Button>
+          )}
+        </div>
+        <div style={{ display: "grid", gridTemplateColumns: "repeat(2, minmax(0, 1fr))", gap: 10 }}>
+          <CrudDetailItem label="Client">{clientName}</CrudDetailItem>
+          <CrudDetailItem label="Department">{row.department || "—"}</CrudDetailItem>
+          <CrudDetailItem label="Machine" mono>{row.machine_name || "—"}</CrudDetailItem>
+          <CrudDetailItem label="Email Identifier" mono>{row.email_identifier || "—"}</CrudDetailItem>
+          <CrudDetailItem label="Owner">{row.owner || "—"}</CrudDetailItem>
+          <CrudDetailItem label="Current Version" mono>{row.current_version || "—"}</CrudDetailItem>
+          <CrudDetailItem label="Schedule Time" mono>{row.schedule_time || "—"}</CrudDetailItem>
+          <CrudDetailItem label="Manual Process Rate" mono>{rateLabel}</CrudDetailItem>
+          <CrudDetailItem label="Bot Age" mono>{ageLabel}</CrudDetailItem>
+          <CrudDetailItem label="Created Date" mono>{createdDate}</CrudDetailItem>
+          <CrudDetailItem label="Description" full>{row.description || "No description provided."}</CrudDetailItem>
+        </div>
+        <div style={{ display: "flex", justifyContent: "flex-end", gap: 8, marginTop: 18 }}>
+          {ctx?.canWrite && ctx?.openEdit && (
+            <Button variant="ghost" onClick={() => { onClose(); ctx.openEdit(row); }}>
+              Edit
+            </Button>
+          )}
+          <Button onClick={onClose}>Close</Button>
+        </div>
+      </Modal>
+    );
+  },
   formFields: [
     { key: "bot_name", label: "Bot name", required: true },
     { key: "email_identifier", label: "Email identifier", required: true },
@@ -5538,6 +6508,7 @@ const botConfig = {
 const NAV_ADMIN = [
   { key: "dashboard", label: "Dashboard", icon: LayoutDashboard },
   { key: "reports", label: "Bot Reports", icon: FileBarChart },
+  { key: "timezone", label: "Timezones & Meetings", icon: Globe },
   { key: "bots", label: "Bots", icon: Bot },
   { key: "clients", label: "Clients", icon: Users },
 
@@ -5554,8 +6525,10 @@ const NAV_ADMIN = [
 ];
 const NAV_CLIENT = [
   { key: "dashboard", label: "Dashboard", icon: LayoutDashboard },
+  { key: "tickets", label: "Tickets", icon: ClipboardList },
   { key: "contact", label: "Contact", icon: MessageSquare },
   { key: "reports", label: "Bot Reports", icon: FileBarChart },
+  { key: "timezone", label: "Timezone Converter", icon: Globe },
   { key: "failures", label: "Failures", icon: AlertOctagon },
   { key: "bots", label: "Bots", icon: Bot },
   { key: "account", label: "Account", icon: UserCircle2 },
@@ -5621,6 +6594,51 @@ function ProfileMenu({ email, role, onLogout, theme, toggleTheme }) {
 }
 
 
+class ViewErrorBoundary extends React.Component {
+  constructor(props) {
+    super(props);
+    this.state = { hasError: false, error: null };
+  }
+  static getDerivedStateFromError(error) {
+    return { hasError: true, error };
+  }
+  componentDidCatch(error, errorInfo) {
+    console.error("View render error:", error, errorInfo);
+  }
+  componentDidUpdate(prevProps) {
+    if (prevProps.viewKey !== this.props.viewKey && this.state.hasError) {
+      this.setState({ hasError: false, error: null });
+    }
+  }
+  render() {
+    if (this.state.hasError) {
+      return (
+        <div style={{
+          padding: 28, background: "var(--surface)", border: "1px solid var(--border)",
+          borderRadius: 14, textAlign: "center", margin: "20px 0",
+        }}>
+          <AlertTriangle size={32} style={{ color: "var(--warning)", marginBottom: 10 }} />
+          <h3 style={{ margin: "0 0 6px", fontSize: 16, color: "var(--text)" }}>Something went wrong loading this view</h3>
+          <p style={{ margin: "0 0 16px", fontSize: 12.5, color: "var(--text-dim)" }}>
+            {this.state.error?.message || "An unexpected error occurred."}
+          </p>
+          <button
+            type="button"
+            onClick={() => this.setState({ hasError: false, error: null })}
+            style={{
+              padding: "7px 16px", borderRadius: 8, background: "var(--accent)", color: "#fff",
+              border: "none", fontSize: 12.5, fontWeight: 700, cursor: "pointer",
+            }}
+          >
+            Retry View
+          </button>
+        </div>
+      );
+    }
+    return this.props.children;
+  }
+}
+
 const SIDEBAR_KEY = "heartbeat_sidebar_collapsed";
 
 function AppShell({ session, onLogout, onSessionExpired, onTokensRefreshed, theme, toggleTheme }) {
@@ -5639,13 +6657,23 @@ function AppShell({ session, onLogout, onSessionExpired, onTokensRefreshed, them
     }
   }, [token]);
   const api = useApi(baseUrl, session, onTokensRefreshed, onSessionExpired);
-  const [view, setView] = useState("dashboard");
+  const initialTicketKey = useMemo(() => {
+    const match = String(window.location.pathname || "").match(/^\/tickets\/([A-Za-z0-9-]+)\/?$/i);
+    return match ? match[1].toUpperCase() : null;
+  }, []);
+  const [view, setView] = useState(() => (
+    initialTicketKey
+      ? (["admin", "admin2", "admin3"].includes(role) ? "action-items" : "tickets")
+      : "dashboard"
+  ));
   const [logContext, setLogContext] = useState(null);
   const [wsConnected, setWsConnected] = useState(false);
   const [liveEvents, setLiveEvents] = useState([]);
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
   const [botsClientFilter, setBotsClientFilter] = useState(null);
-  const [targetActionItem, setTargetActionItem] = useState(null);
+  const [targetActionItem, setTargetActionItem] = useState(() => (
+    initialTicketKey ? { ticketKey: initialTicketKey, ts: Date.now() } : null
+  ));
   const [soundOn, setSoundOn] = useState(() => isSoundEnabled());
   const handleToggleSound = () => {
     const next = toggleSound();
@@ -5663,17 +6691,19 @@ function AppShell({ session, onLogout, onSessionExpired, onTokensRefreshed, them
     { key: "dashboard", label: "Dashboard", icon: LayoutDashboard },
     { key: "action-items", label: "Action Items", icon: ClipboardList },
     { key: "reports", label: "Bot Reports", icon: FileBarChart },
+    { key: "timezone", label: "Timezones & Meetings", icon: Globe },
     { key: "logs", label: "Logs", icon: FileText },
     { key: "messages", label: "Messages", icon: MessageSquare },
     { key: "failures", label: "Failures", icon: AlertOctagon },
     { key: "clients", label: "Clients", icon: Users },
-    { key: "client-management", label: "Client Management", icon: Building2 },
+    { key: "client-management", label: "Credential Management", icon: Building2 },
     { key: "bots", label: "Bots", icon: Bot },
     { key: "departments", label: "Departments", icon: Building2 },
   ];
   const NAV = isSuperAdmin ? NAV_ADMIN : isAnyAdmin ? NAV_ADMIN_VIEWER : NAV_CLIENT;
   const [clientTimezone, setClientTimezone] = useState(null);
   const [unreadMessages, setUnreadMessages] = useState(0);
+  const [timezoneModalOpen, setTimezoneModalOpen] = useState(false);
 
   const toggleSidebar = useCallback(() => {
     setSidebarCollapsed((c) => {
@@ -5699,9 +6729,12 @@ function AppShell({ session, onLogout, onSessionExpired, onTokensRefreshed, them
     if (delay <= 0) return;
     const id = setTimeout(async () => {
       try {
-        const res = await fetch(`${baseUrl}/auth/refresh`, {
+        const res = await fetch(`${baseUrl || ""}/auth/refresh`, {
           method: "POST",
-          headers: { "Content-Type": "application/json" },
+          headers: {
+            "Content-Type": "application/json",
+            "ngrok-skip-browser-warning": "true",
+          },
           body: JSON.stringify({ refresh_token: session.refreshToken }),
         });
         if (res.ok) {
@@ -5714,8 +6747,12 @@ function AppShell({ session, onLogout, onSessionExpired, onTokensRefreshed, them
   }, [token, session.refreshToken, baseUrl, onTokensRefreshed]);
 
   useEffect(() => {
-    if (!baseUrl || !token) return;
-    const wsUrl = baseUrl.replace(/^http/, "ws") + `/ws?token=${encodeURIComponent(token)}`;
+    if (!token) return;
+    const protocol = window.location.protocol === "https:" ? "wss:" : "ws:";
+    const host = (baseUrl && baseUrl.startsWith("http"))
+      ? baseUrl.replace(/^https?:\/\//, "")
+      : window.location.host;
+    const wsUrl = `${protocol}//${host}/ws?token=${encodeURIComponent(token)}`;
     let ws;
     let retryTimer;
     let closed = false;
@@ -5751,7 +6788,7 @@ function AppShell({ session, onLogout, onSessionExpired, onTokensRefreshed, them
       clearTimeout(retryTimer);
       try { ws?.close(); } catch (_) { }
     };
-  }, [baseUrl, token]);
+  }, [baseUrl, token, currentUserId]);
 
   useEffect(() => {
     console.log("SESSION CLIENT ID:", session?.clientId);
@@ -5813,6 +6850,9 @@ function AppShell({ session, onLogout, onSessionExpired, onTokensRefreshed, them
     setBotsClientFilter(null); // manual nav clears any client-scoped bot filter
     setView(next);
     if (next !== "logs") setLogContext(null);
+    if (next !== "action-items" && next !== "tickets" && window.location.pathname.startsWith("/tickets/")) {
+      window.history.replaceState(null, "", "/");
+    }
     setMobileMenuOpen(false);
     window.scrollTo({ top: 0, behavior: "smooth" });
   };
@@ -5859,11 +6899,19 @@ function AppShell({ session, onLogout, onSessionExpired, onTokensRefreshed, them
       <aside className={`hb-sidebar${sidebarCollapsed ? " is-collapsed" : ""}${mobileMenuOpen ? " mobile-open" : ""}`}>
         <div className="hb-brand">
           <div className="hb-brand-mark">
-            <img src="/logo2.png" alt="HeartBeat" className="hb-brand-logo" />
+            <img src="/logo_2.png" alt="HeartBeat" className="hb-brand-logo" />
           </div>
           <div className="hb-brand-copy" style={{ minWidth: 0, flex: 1 }}>
-            <div style={{ font: "800 16px/1.1 var(--font-display)", letterSpacing: "-.1px" }}>HeartBeat</div>
-            <div style={{ marginTop: 3, color: "var(--text-dim)", fontSize: 10.5, letterSpacing: ".35px" }}>Bot Monitor Dashboard</div>
+            <div
+              style={{
+                font: "800 19px/1.1 'Alice', serif",
+                letterSpacing: "-.1px",
+              }}
+            >
+              <span style={{ color: "#000", fontWeight: 800 }}>Heart</span>
+              <span style={{ color: "#f97316", fontWeight: 800 }}>Beat</span>
+            </div>
+            <div style={{ marginTop: 3, color: "var(--text-dim)", fontSize: 10.5, letterSpacing: ".35px" }}>The Pulse Of Every Bot </div>
           </div>
           <button
             type="button"
@@ -5937,9 +6985,11 @@ function AppShell({ session, onLogout, onSessionExpired, onTokensRefreshed, them
             </div>
           </div>
           {isAdmin ? (
-            <StayAheadClocks />
+            <StayAheadClocks onOpenPlanner={() => setTimezoneModalOpen(true)} />
           ) : (
-            <ClientTimezoneClocks timezone={clientTimezone} />
+            <div onClick={() => setTimezoneModalOpen(true)} style={{ cursor: "pointer" }} title="Click to open Timezone Converter">
+              <ClientTimezoneClocks timezone={clientTimezone} />
+            </div>
           )}
 
 
@@ -6008,6 +7058,7 @@ function AppShell({ session, onLogout, onSessionExpired, onTokensRefreshed, them
 
 
           <div className="hb-content-frame">
+            <ViewErrorBoundary viewKey={view}>
             {view === "dashboard" && (
               <DashboardView
                 api={api}
@@ -6015,7 +7066,9 @@ function AppShell({ session, onLogout, onSessionExpired, onTokensRefreshed, them
                 liveEvents={liveEvents}
                 role={role}
                 isAdmin={isAdmin}
+                isSuperAdmin={isSuperAdmin}
                 session={session}
+                onNavigateView={selectView}
               />
             )}
 
@@ -6023,8 +7076,8 @@ function AppShell({ session, onLogout, onSessionExpired, onTokensRefreshed, them
 
             {view === "messages" && isAdmin && <MessagesView api={api} role={role} session={session} liveEvents={liveEvents} />}
             {view === "contact" && !isAdmin && <MessagesView api={api} role={role} session={session} liveEvents={liveEvents} />}
-            {view === "reports" && <ReportsView api={api} onOpenLogs={openLogsFromRun} isAdmin={isAdmin} />}
-            {view === "logs" && isAdmin && <LogsView api={api} context={logContext} onBackToReports={() => selectView("reports")} />}
+            {view === "reports" && <ReportsView api={api} onOpenLogs={openLogsFromRun} isAdmin={isAdmin} isSuperAdmin={isSuperAdmin} />}
+            {view === "logs" && isAdmin && <LogsView api={api} context={logContext} onBackToReports={() => selectView("reports")} isAdmin={isAdmin} isSuperAdmin={isSuperAdmin} />}
             {view === "failures" && (
               <FailuresView api={api} isAdmin={isAdmin} />
             )}
@@ -6063,6 +7116,17 @@ function AppShell({ session, onLogout, onSessionExpired, onTokensRefreshed, them
                 api={api}
                 targetActionItem={targetActionItem}
                 onClearTargetActionItem={() => setTargetActionItem(null)}
+                liveEvents={liveEvents}
+              />
+            )}
+            {view === "tickets" && !isAdmin && (
+              <ActionItems
+                api={api}
+                targetActionItem={targetActionItem}
+                onClearTargetActionItem={() => setTargetActionItem(null)}
+                clientMode={true}
+                clientId={session?.clientId || session?.client_id}
+                liveEvents={liveEvents}
               />
             )}
             {view === "account" && !isAdmin && (
@@ -6071,9 +7135,27 @@ function AppShell({ session, onLogout, onSessionExpired, onTokensRefreshed, them
                 session={session}
               />
             )}
+            {view === "timezone" && (
+              <TimezonePlanner api={api} />
+            )}
+            </ViewErrorBoundary>
           </div>
         </main>
       </div>
+
+      {timezoneModalOpen && (
+        <Modal
+          title="Timezone Mapping & Meeting Planner"
+          onClose={() => setTimezoneModalOpen(false)}
+          width={1100}
+        >
+          <TimezonePlanner
+            api={api}
+            isModal={true}
+            onClose={() => setTimezoneModalOpen(false)}
+          />
+        </Modal>
+      )}
 
 
 

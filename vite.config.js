@@ -9,9 +9,7 @@ export default defineConfig({
     port: 5173,
     strictPort: true,
 
-    allowedHosts: [
-      'alysha-vertebrated-toothsomely.ngrok-free.dev',
-    ],
+    allowedHosts: true,
 
     proxy: {
       '/auth': {
@@ -25,6 +23,11 @@ export default defineConfig({
       },
 
       '/bots': {
+        target: 'http://127.0.0.1:8000',
+        changeOrigin: true,
+      },
+
+      '/bot-runs': {
         target: 'http://127.0.0.1:8000',
         changeOrigin: true,
       },

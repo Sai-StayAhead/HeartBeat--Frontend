@@ -4,7 +4,7 @@ import {
   Eye, EyeOff, FileText, Filter, Folder, HardDrive, KeyRound, Link2,
   Loader2, Monitor, Pencil, Plus, RotateCcw, Search, ShieldAlert,
   StickyNote, Trash2, Users, X, LayoutGrid, ChevronRight,
-  Sparkles, Globe, Settings2, Clock, Download, Table2, CheckCheck
+  Sparkles, Globe, Settings2, Clock, Download, Table2, CheckCheck,
 } from "lucide-react";
 
 const BASE = "/client-management";
@@ -826,9 +826,9 @@ function ExcelMatrixViewModal({ title, rows, onClose, onCopy, copiedKey, onFetch
               ))}
             </select>
 
-            <button type="button" className="cmx-matrix-export" onClick={exportCSV} title="Download CSV">
+            {/* <button type="button" className="cmx-matrix-export" onClick={exportCSV} title="Download CSV">
               <Download size={13} /> Export CSV
-            </button>
+            </button> */}
 
             <button type="button" className="cmx-matrix-close" onClick={onClose} aria-label="Close">
               <X size={17} />
@@ -1076,14 +1076,14 @@ function ProjectConsole({ project, projects, tabRows, tabLoading, onBack, onAdd,
       <div className="cmx-summary-card">
         <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 12 }}>
           <h3 style={{ margin: 0 }}><Sparkles size={13} /> Quick Module Launcher</h3>
-          <button
+          {/* <button
             type="button"
             className="cmx-btn cmx-btn-solid cmx-btn-sm"
             onClick={() => setShowExcelMatrix(true)}
             style={{ background: "var(--accent)", color: "#06201C", fontWeight: 700 }}
           >
             <Table2 size={13} /> Open Excel Matrix
-          </button>
+          </button> */}
         </div>
         <div className="cmx-shortcut-grid">
           {PROJECT_MODULES.slice(1).map(({ key, label, icon: Icon }) => (
@@ -1138,7 +1138,7 @@ function ProjectConsole({ project, projects, tabRows, tabLoading, onBack, onAdd,
       <div className="cmx-project-toolbar">
         <div className="cmx-segmented">
           <button type="button" className={view !== "all" ? "active" : ""} onClick={() => setView("sections")}>Sections</button>
-          <button type="button" className={view === "all" ? "active" : ""} onClick={() => setView("all")}>All Details Table</button>
+          {/* <button type="button" className={view === "all" ? "active" : ""} onClick={() => setView("all")}>All Details Table</button> */}
         </div>
         {view === "all" && (
           <div className="cmx-ledger-toolbar" style={{ margin: 0 }}>
@@ -1206,6 +1206,7 @@ export default function ClientManagementCRUDView({ api, session }) {
   const [accessKey, setAccessKey] = useState("");
   const [unlocking, setUnlocking] = useState(false);
   const [unlockError, setUnlockError] = useState("");
+  const [showAccessKey, setShowAccessKey] = useState(false);
   const [clients, setClients] = useState([]);
   const [selectedClientId, setSelectedClientId] = useState(null);
   const [client, setClient] = useState(null);
@@ -1229,7 +1230,11 @@ export default function ClientManagementCRUDView({ api, session }) {
   const cmRequest = useCallback(async (path, options = {}) => {
     if (!cmToken) throw new Error("Credential Management is locked.");
     const isForm = options.body instanceof FormData;
-    const headers = { ...(options.headers || {}), Authorization: `Bearer ${cmToken}` };
+    const headers = {
+      ...(options.headers || {}),
+      Authorization: `Bearer ${cmToken}`,
+      "ngrok-skip-browser-warning": "true",
+    };
     if (!isForm) headers["Content-Type"] = "application/json";
 const baseUrl = session?.baseUrl || window.location.origin;
 
@@ -1239,22 +1244,28 @@ const res = await fetch(`${baseUrl}${BASE}${path}`, {
 });
     let body = null;
     try { body = await res.json(); } catch (_) {}
-    if (res.status === 401 || res.status === 403) { setCmToken(null); throw new Error(body?.detail || "Client Management access expired or invalid."); }
+    if (res.status === 401 || res.status === 403) { setCmToken(null); throw new Error(body?.detail || "Credetnial Management access expired or invalid."); }
     if (!res.ok) { const detail = body?.detail; throw new Error(typeof detail === "string" ? detail : detail?.message || body?.message || `Request failed (${res.status})`); }
     return body;
   }, [cmToken, session?.baseUrl]);
 
-  const unlock = async (e) => {
-    e.preventDefault();
-    if (!accessKey.trim()) return setUnlockError("Enter the Credential Management access key.");
-    setUnlocking(true); setUnlockError("");
-    try {
-      const result = await api(`${BASE}/unlock`, { method: "POST", body: JSON.stringify({ key: accessKey.trim() }) });
-      if (!result?.access_token) throw new Error("Backend did not return a Credential Management access token.");
-      setCmToken(result.access_token); setAccessKey("");
-    } catch (e2) { setUnlockError(e2.message || "Unable to unlock Credential Management."); }
-    finally { setUnlocking(false); }
-  };
+const unlock = async (e) => {
+  e.preventDefault();
+  if (!accessKey.trim()) return setUnlockError("Enter the Credential Management access key.");
+  setUnlocking(true); setUnlockError("");
+  try {
+    const result = await api(`${BASE}/unlock`, { method: "POST", body: JSON.stringify({ key: accessKey.trim() }) });
+    if (!result?.access_token) throw new Error("Backend did not return a Credential Management access token.");
+    setCmToken(result.access_token);
+    setAccessKey("");          // ✅ clear from state/memory once unlocked
+    setShowAccessKey(false);   // ✅ reset visibility toggle
+  } catch (e2) {
+    setUnlockError(e2.message || "Unable to unlock Credential Management.");
+    setAccessKey("");          // ✅ FIX: clear on failed attempt too — don't
+                                //    leave a wrong key sitting visible/in-memory
+  }
+  finally { setUnlocking(false); }
+};
 
   const loadClients = useCallback(async () => {
     if (!cmToken) return;
@@ -1295,7 +1306,11 @@ const res = await fetch(`${baseUrl}${BASE}${path}`, {
   const filteredClients = useMemo(() => {
     const q = search.trim().toLowerCase();
     if (!q) return clients;
-    return clients.filter(c => `${c.client_name || ""} ${c.email || ""} ${c.contact_person || ""}`.toLowerCase().includes(q));
+    return clients.filter(c =>
+      `${c.client_name || ""} ${c.email || ""} ${c.contact_person || ""} ${c.email_domains || ""} ${c.timezone || ""} ${c.status || ""} client #${c.client_id || ""}`
+        .toLowerCase()
+        .includes(q)
+    );
   }, [clients, search]);
 
   const [clientDrawer, setClientDrawer] = useState(null);
@@ -1464,15 +1479,39 @@ const res = await fetch(`${baseUrl}${BASE}${path}`, {
           <span className="cmx-gate-kicker"><Sparkles size={11} /> Restricted workspace</span>
           <h1>Credential Management</h1>
           <p>Enter Super Hero Name to unlock access.</p>
-          <form onSubmit={unlock}>
-            <label>Super Hero Name</label>
-            <input className="cmx-input" type="text" value={accessKey} onChange={e => setAccessKey(e.target.value)} placeholder="Enter Super Hero Name" autoFocus />
-            {unlockError && <div className="cmx-error-bar" style={{ marginTop: 10, marginBottom: 0 }}><AlertTriangle size={14} /> {unlockError}</div>}
-            <button type="submit" className="cmx-gate-btn" disabled={unlocking}>
-              {unlocking ? <Loader2 size={15} className="cmx-spin" /> : <ShieldAlert size={15} />}
-              {unlocking ? "Unlocking..." : "Unlock Credential Management"}
-            </button>
-          </form>
+          <form onSubmit={unlock} autoComplete="off">
+  <label htmlFor="cmx-superhero-key">Super Hero Name</label>
+  <div className="cmx-pw-input-wrap">
+    <input
+      id="cmx-superhero-key"
+      className="cmx-input"
+      type={showAccessKey ? "text" : "password"}
+      value={accessKey}
+      onChange={e => setAccessKey(e.target.value)}
+      placeholder="Enter Super Hero Name"
+      autoFocus
+      autoComplete="new-password"
+      autoCorrect="off"
+      autoCapitalize="off"
+      spellCheck={false}
+      name="cmx-unlock-key"
+    />
+    <button
+      type="button"
+      className="cmx-pw-toggle"
+      onClick={() => setShowAccessKey((v) => !v)}
+      title={showAccessKey ? "Hide" : "Reveal"}
+      tabIndex={-1}
+    >
+      {showAccessKey ? <EyeOff size={13} /> : <Eye size={13} />}
+    </button>
+  </div>
+  {unlockError && <div className="cmx-error-bar" style={{ marginTop: 10, marginBottom: 0 }}><AlertTriangle size={14} /> {unlockError}</div>}
+  <button type="submit" className="cmx-gate-btn" disabled={unlocking}>
+    {unlocking ? <Loader2 size={15} className="cmx-spin" /> : <ShieldAlert size={15} />}
+    {unlocking ? "Unlocking..." : "Unlock Credential Management"}
+  </button>
+</form>
         </div>
       </div>
     );
@@ -1507,7 +1546,7 @@ const res = await fetch(`${baseUrl}${BASE}${path}`, {
 
       <div className="cmx-header">
         <div>
-          <h1>{client?.client_name || "Client Management"}</h1>
+          <h1>{client?.client_name || "Credential Management"}</h1>
           {client && <div className="cmx-header-meta"><StatusDot value={client.status} /><i /><span>ID: {client.client_id}</span><i /><span>{client.email || "No email"}</span><i /><span><Globe size={11} style={{ verticalAlign: "-2px", marginRight: 3 }} />{client.timezone || "Timezone not configured"}</span></div>}
         </div>
         {client && (
