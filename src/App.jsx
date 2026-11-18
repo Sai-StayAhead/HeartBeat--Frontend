@@ -659,7 +659,10 @@ function InfoBanner({ message, onDismiss }) {
 
 function timeAgo(iso) {
   if (!iso) return "—";
-  const diff = (Date.now() - new Date(iso).getTime()) / 1000;
+  const date = parseServerDate(iso);
+  if (!date) return "—";
+  const diff = (Date.now() - date.getTime()) / 1000;
+  if (diff < 0) return "just now";
   if (diff < 60) return `${Math.floor(diff)}s ago`;
   if (diff < 3600) return `${Math.floor(diff / 60)}m ago`;
   if (diff < 86400) return `${Math.floor(diff / 3600)}h ago`;
@@ -716,9 +719,11 @@ function pctChange(curr, prev) {
   return Math.round(((curr - prev) / prev) * 100);
 }
 
+const DEFAULT_DISPLAY_TIMEZONE = "Asia/Kolkata";
+
 function parseServerDate(iso) {
   if (!iso) return null;
-  if (iso instanceof Date) return iso;
+  if (iso instanceof Date) return isNaN(iso.getTime()) ? null : iso;
   const value = String(iso).trim();
   if (!value) return null;
   const normalized = /(?:Z|[+-]\d{2}:?\d{2})$/i.test(value) ? value : `${value}Z`;
@@ -726,72 +731,121 @@ function parseServerDate(iso) {
   return Number.isNaN(date.getTime()) ? null : date;
 }
 
-function getLocalDateStr(iso) {
+function getLocalDateStr(iso, timezone = DEFAULT_DISPLAY_TIMEZONE) {
   if (!iso) return "";
-  // If passed a Date object, return its local date parts directly
-  if (iso instanceof Date) {
-    if (isNaN(iso.getTime())) return "";
-    const y = iso.getFullYear();
-    const m = String(iso.getMonth() + 1).padStart(2, "0");
-    const day = String(iso.getDate()).padStart(2, "0");
-    return `${y}-${m}-${day}`;
+  const date = parseServerDate(iso);
+  if (!date) return "";
+  try {
+    const formatter = new Intl.DateTimeFormat("en-CA", {
+      timeZone: timezone,
+      year: "numeric",
+      month: "2-digit",
+      day: "2-digit",
+    });
+    return formatter.format(date); // en-CA gives YYYY-MM-DD
+  } catch {
+    const y = date.getFullYear();
+    const m = String(date.getMonth() + 1).padStart(2, "0");
+    const d = String(date.getDate()).padStart(2, "0");
+    return `${y}-${m}-${d}`;
   }
-  const value = String(iso).trim();
-  if (!value) return "";
-  // If the server sends a naive datetime string (no TZ suffix), the DB time IS
-  // already in local/IST time. We must NOT treat it as UTC.
-  // Just extract the date portion directly from the string to avoid a +5:30 shift
-  // that would push evening IST runs into the next day.
-  if (/^\d{4}-\d{2}-\d{2}(T\d{2}:\d{2}(:\d{2})?)?$/.test(value)) {
-    return value.slice(0, 10);
-  }
-  // Has explicit TZ offset (e.g. +05:30 or Z) — parse and use local date
-  const d = new Date(value);
-  if (isNaN(d.getTime())) return "";
-  const y = d.getFullYear();
-  const m = String(d.getMonth() + 1).padStart(2, "0");
-  const day = String(d.getDate()).padStart(2, "0");
-  return `${y}-${m}-${day}`;
 }
 
-function formatRunTime(iso) {
+function formatRunTime(iso, timezone = DEFAULT_DISPLAY_TIMEZONE) {
   if (!iso) return "—";
-  const date = parseServerDate(iso) || new Date(iso);
-  if (isNaN(date.getTime())) return "—";
-  return new Intl.DateTimeFormat("en-US", {
-    hour: "2-digit",
-    minute: "2-digit",
-    hour12: true,
-  }).format(date);
+  const date = parseServerDate(iso);
+  if (!date) return "—";
+  try {
+    return new Intl.DateTimeFormat("en-US", {
+      hour: "2-digit",
+      minute: "2-digit",
+      hour12: true,
+      timeZone: timezone,
+    }).format(date);
+  } catch {
+    return date.toLocaleTimeString(undefined, { hour: "2-digit", minute: "2-digit" });
+  }
+}
+
+function formatShortDate(iso, timezone = DEFAULT_DISPLAY_TIMEZONE) {
+  if (!iso) return "";
+  const date = parseServerDate(iso);
+  if (!date) return "";
+  try {
+    return new Intl.DateTimeFormat("en-US", {
+      month: "short",
+      day: "numeric",
+      timeZone: timezone,
+    }).format(date);
+  } catch {
+    return date.toLocaleDateString(undefined, { month: "short", day: "numeric" });
+  }
+}
+
+function formatDateTime(iso, timezone = DEFAULT_DISPLAY_TIMEZONE) {
+  if (!iso) return "—";
+  const date = parseServerDate(iso);
+  if (!date) return "—";
+  try {
+    return new Intl.DateTimeFormat("en-US", {
+      month: "short",
+      day: "numeric",
+      hour: "2-digit",
+      minute: "2-digit",
+      hour12: true,
+      timeZone: timezone,
+    }).format(date);
+  } catch {
+    return date.toLocaleString(undefined, {
+      month: "short",
+      day: "numeric",
+      hour: "2-digit",
+      minute: "2-digit",
+    });
+  }
 }
 
 function fmtDuration(seconds) {
   if (seconds == null || isNaN(seconds)) return "—";
-  const sec = Math.round(Number(seconds));
-  const mins = Math.floor(sec / 60);
-  const secs = sec % 60;
-  if (mins === 0) return `${secs}s`;
-  if (mins < 60) return `${mins}m ${secs}s`;
-  const hrs = Math.floor(mins / 60);
-  const remMins = mins % 60;
-  return `${hrs}h ${remMins}m`;
+  const sec = Math.max(0, Math.floor(Number(seconds)));
+  const hrs = Math.floor(sec / 3600);
+  const rem = sec % 3600;
+  const mins = Math.floor(rem / 60);
+  const secs = rem % 60;
+  if (hrs > 0) {
+    return secs > 0 ? `${hrs}h ${mins}m ${secs}s` : `${hrs}h ${mins}m`;
+  }
+  if (mins > 0) {
+    return `${mins}m ${secs}s`;
+  }
+  return `${secs}s`;
 }
 
-function formatDate(value) {
+function formatDate(value, timezone = DEFAULT_DISPLAY_TIMEZONE) {
   if (!value) return "—";
-  const date = new Date(String(value).includes("T") ? value : `${value}T00:00:00`);
-  if (Number.isNaN(date.getTime())) return "—";
-  return date.toLocaleDateString(undefined, {
-    month: "short",
-    day: "numeric",
-    year: "numeric",
-  });
+  const date = parseServerDate(value) || new Date(String(value).includes("T") ? value : `${value}T00:00:00`);
+  if (!date || Number.isNaN(date.getTime())) return "—";
+  try {
+    return new Intl.DateTimeFormat("en-US", {
+      month: "short",
+      day: "numeric",
+      year: "numeric",
+      timeZone: timezone,
+    }).format(date);
+  } catch {
+    return date.toLocaleDateString(undefined, {
+      month: "short",
+      day: "numeric",
+      year: "numeric",
+    });
+  }
 }
 
 function isWithinLastDays(iso, days) {
   if (!iso) return false;
-  const t = new Date(iso).getTime();
-  if (isNaN(t)) return false;
+  const date = parseServerDate(iso);
+  if (!date) return false;
+  const t = date.getTime();
   const cutoff = Date.now() - days * 24 * 60 * 60 * 1000;
   return t >= cutoff;
 }
@@ -3152,10 +3206,10 @@ function RunLogsModal({ api, bot, run, isAdmin = false, isSuperAdmin = false, on
         <div>
           <div style={{ color: "var(--text-dim)", fontSize: 10.5, textTransform: "uppercase", letterSpacing: 0.5 }}>Started At</div>
           <div style={{ fontWeight: 500, fontSize: 12, marginTop: 2 }}>
-            {currentRun?.start_time ? new Date(currentRun.start_time).toLocaleTimeString(undefined, { hour: "2-digit", minute: "2-digit" }) : "—"}
+            {formatRunTime(currentRun?.start_time)}
           </div>
           <div style={{ color: "var(--text-dim)", fontSize: 10.5 }}>
-            {currentRun?.start_time ? new Date(currentRun.start_time).toLocaleDateString(undefined, { month: "short", day: "numeric" }) : ""}
+            {formatShortDate(currentRun?.start_time)}
           </div>
         </div>
 
@@ -3163,10 +3217,10 @@ function RunLogsModal({ api, bot, run, isAdmin = false, isSuperAdmin = false, on
           <div>
             <div style={{ color: "var(--text-dim)", fontSize: 10.5, textTransform: "uppercase", letterSpacing: 0.5 }}>Ended At</div>
             <div style={{ fontWeight: 500, fontSize: 12, marginTop: 2 }}>
-              {new Date(currentRun.end_time).toLocaleTimeString(undefined, { hour: "2-digit", minute: "2-digit" })}
+              {formatRunTime(currentRun?.end_time)}
             </div>
             <div style={{ color: "var(--text-dim)", fontSize: 10.5 }}>
-              {new Date(currentRun.end_time).toLocaleDateString(undefined, { month: "short", day: "numeric" })}
+              {formatShortDate(currentRun?.end_time)}
             </div>
           </div>
         )}
@@ -3455,7 +3509,7 @@ function LogsView({ api, context = null, onBackToReports, isAdmin = false, isSup
                       <td style={{ padding: "12px 16px", color: "var(--text-muted)" }}>{run.client_name || "—"}</td>
                       <td style={{ padding: "12px 16px", fontFamily: "var(--font-mono)", fontSize: 11.5 }}>#{run.run_id}</td>
                       <td style={{ padding: "12px 16px" }}><Badge tone={run.status === "Success" ? "success" : run.status === "Failed" ? "danger" : "warning"}>{run.status || "—"}</Badge></td>
-                      <td style={{ padding: "12px 16px", color: "var(--text-muted)", fontFamily: "var(--font-mono)", fontSize: 11.5 }}>{run.start_time ? new Date(run.start_time).toLocaleString(undefined, { month: "short", day: "numeric", hour: "2-digit", minute: "2-digit" }) : "—"}</td>
+                      <td style={{ padding: "12px 16px", color: "var(--text-muted)", fontFamily: "var(--font-mono)", fontSize: 11.5 }}>{formatDateTime(run.start_time)}</td>
                       <td style={{ padding: "12px 16px", textAlign: "right", fontFamily: "var(--font-mono)" }}>{run.files.length}</td>
                       <td style={{ padding: "12px 16px", textAlign: "right" }}>
                         <Button variant="ghost" onClick={() => setSelectedRun(run)}><FileText size={13} /> View logs</Button>
@@ -3492,7 +3546,7 @@ function LogsView({ api, context = null, onBackToReports, isAdmin = false, isSup
                       <td style={{ padding: "12px 16px", textAlign: "right", fontFamily: "var(--font-mono)" }}>{bot.runCount}</td>
                       <td style={{ padding: "12px 16px", textAlign: "right", fontFamily: "var(--font-mono)", color: "var(--success)" }}>{bot.successCount}</td>
                       <td style={{ padding: "12px 16px", textAlign: "right", fontFamily: "var(--font-mono)", color: bot.failedCount > 0 ? "var(--danger)" : "var(--text-dim)" }}>{bot.failedCount}</td>
-                      <td style={{ padding: "12px 16px", color: "var(--text-muted)", fontFamily: "var(--font-mono)", fontSize: 11.5 }}>{bot.latestStart ? new Date(bot.latestStart).toLocaleString(undefined, { month: "short", day: "numeric", hour: "2-digit", minute: "2-digit" }) : "—"}</td>
+                      <td style={{ padding: "12px 16px", color: "var(--text-muted)", fontFamily: "var(--font-mono)", fontSize: 11.5 }}>{formatDateTime(bot.latestStart)}</td>
                       <td style={{ padding: "12px 16px", textAlign: "right" }}>
                         <Button variant="ghost" onClick={(e) => { e.stopPropagation(); setSelectedBot(bot); }}>
                           <FileText size={13} /> View logs
@@ -3559,12 +3613,7 @@ function BotRunHistoryModal({ api, bot, isAdmin = false, isSuperAdmin = false, o
     return [...(runs || [])].sort((a, b) => new Date(b.start_time || 0) - new Date(a.start_time || 0));
   }, [runs]);
 
-  const fmtDateTime = (iso) => {
-    if (!iso) return "—";
-    return new Date(iso).toLocaleString(undefined, {
-      month: "short", day: "numeric", hour: "2-digit", minute: "2-digit",
-    });
-  };
+  const fmtDateTime = (iso) => formatDateTime(iso);
 
   return (
     <>
@@ -7202,6 +7251,16 @@ export default function HeartBeatApp() {
   };
 
   const handleLogout = (message = "") => {
+    const rf = session?.refreshToken;
+    if (rf) {
+      try {
+        fetch("/auth/logout", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ refresh_token: rf }),
+        }).catch(() => {});
+      } catch (err) {}
+    }
     localStorage.removeItem(SESSION_KEY);
     setSessionMessage(message);
     setSession(null);
