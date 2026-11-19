@@ -199,7 +199,10 @@ body {
 .hb-sidebar {
     width: 248px;
     flex: 0 0 248px;
-    min-height: 100vh;
+    height: 100vh;
+    height: 100dvh;
+    max-height: 100vh;
+    max-height: 100dvh;
     position: sticky;
     top: 0;
     display: flex;
@@ -208,6 +211,8 @@ body {
     border-right: 1px solid var(--border);
     backdrop-filter: blur(18px);
     z-index: 20;
+    overflow: hidden;
+    overscroll-behavior: none;
     transition: width .2s ease, flex-basis .2s ease, background-color .25s ease;
 }
 
@@ -221,6 +226,7 @@ body {
     display: flex;
     align-items: center;
     gap: 11px;
+    flex-shrink: 0;
 }
 
 .hb-brand-mark {
@@ -243,13 +249,12 @@ body {
 }
 
 .hb-sidebar-nav {
-    flex: 1;
-    overflow: auto;
+    flex: 1 1 auto;
+    min-height: 0;
+    overflow-y: auto;
+    overflow-x: hidden;
+    overscroll-behavior: contain;
     padding: 8px 12px;
-}
-
-.hb-sidebar {
-    position: relative;
 }
 
 /* anchor for the floating toggle button */
@@ -328,6 +333,8 @@ body {
 .hb-sidebar-footer {
     padding: 12px;
     border-top: 1px solid var(--border);
+    flex-shrink: 0;
+    margin-top: auto;
 }
 
 .hb-avatar {
