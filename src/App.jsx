@@ -744,7 +744,7 @@ function pctChange(curr, prev) {
   return Math.round(((curr - prev) / prev) * 100);
 }
 
-const DEFAULT_DISPLAY_TIMEZONE = "America/New_York";
+const DEFAULT_DISPLAY_TIMEZONE = "Asia/Kolkata";
 
 function parseServerDate(iso) {
   if (!iso) return null;
@@ -2664,14 +2664,14 @@ function DashboardView({ api, wsConnected, liveEvents, isAdmin, isSuperAdmin = f
   const activeTimezone = useMemo(() => {
     if (isAdmin && clientId) {
       const match = clientOptions.find((c) => String(c.value) === String(clientId));
-      return match?.timezone || "America/New_York";
+      return match?.timezone || "Asia/Kolkata";
     }
     if (!isAdmin && (session?.clientId || session?.client_id)) {
       const cId = session.clientId || session.client_id;
       const match = clientOptions.find((c) => String(c.value) === String(cId));
-      return match?.timezone || clientTimezoneProp || "America/New_York";
+      return match?.timezone || clientTimezoneProp || "Asia/Kolkata";
     }
-    return clientTimezoneProp || "America/New_York";
+    return isAdmin ? "Asia/Kolkata" : (clientTimezoneProp || "Asia/Kolkata");
   }, [isAdmin, clientId, clientOptions, session, clientTimezoneProp]);
 
   const filterGroups = useMemo(() => {
@@ -2685,9 +2685,10 @@ function DashboardView({ api, wsConnected, liveEvents, isAdmin, isSuperAdmin = f
     const params = new URLSearchParams();
     if (department) params.set("department", department);
     if (isAdmin && clientId) params.set("client_id", clientId);
+    if (activeTimezone) params.set("timezone", activeTimezone);
     const qs = params.toString();
     return qs ? `?${qs}` : "";
-  }, [department, clientId, isAdmin]);
+  }, [department, clientId, isAdmin, activeTimezone]);
 
   const load = useCallback(async () => {
     try {
@@ -2764,7 +2765,7 @@ function DashboardView({ api, wsConnected, liveEvents, isAdmin, isSuperAdmin = f
     let today = 0;
     let yesterday = 0;
     for (const r of recent || []) {
-      const runTz = (r.client_id && clientTzMap[r.client_id]) || activeTimezone;
+      const runTz = activeTimezone;
       const d = getLocalDateStr(r.start_time, runTz);
       const tToday = getTodayStr(runTz);
       const tYesterday = getYesterdayStr(runTz);
@@ -2772,13 +2773,13 @@ function DashboardView({ api, wsConnected, liveEvents, isAdmin, isSuperAdmin = f
       if (d === tYesterday) yesterday++;
     }
     return { today, yesterday };
-  }, [recent, clientTzMap, activeTimezone]);
+  }, [recent, activeTimezone]);
 
   const runsForSelectedDate = useMemo(() => {
     return (recent || [])
       .filter((r) => {
         if (!r.start_time) return false;
-        const runTz = (r.client_id && clientTzMap[r.client_id]) || activeTimezone;
+        const runTz = activeTimezone;
         const d = getLocalDateStr(r.start_time, runTz);
         const tToday = getTodayStr(runTz);
         const tYesterday = getYesterdayStr(runTz);
@@ -2788,7 +2789,7 @@ function DashboardView({ api, wsConnected, liveEvents, isAdmin, isSuperAdmin = f
         return isWithinLastDays(r.start_time, 5);
       })
       .sort((a, b) => new Date(b.start_time || 0) - new Date(a.start_time || 0));
-  }, [recent, clientTzMap, activeTimezone, recentDateFilter, customRunDate]);
+  }, [recent, activeTimezone, recentDateFilter, customRunDate]);
 
   const statusCountsForActiveDate = useMemo(() => {
     let all = runsForSelectedDate.length;
@@ -3131,7 +3132,7 @@ function DashboardView({ api, wsConnected, liveEvents, isAdmin, isSuperAdmin = f
                       )}
                     </div>
                     <div className="hb-run-time">
-                      <strong>{formatRunTime(r.start_time, (r.client_id && clientTzMap[r.client_id]) || activeTimezone)}</strong>
+                      <strong>{formatRunTime(r.start_time, activeTimezone)}</strong>
                       <small>{timeAgo(r.start_time)}</small>
                     </div>
                     {effectiveSuperAdmin && (
@@ -4851,6 +4852,10 @@ function ReportsView({ api, onOpenLogs, isAdmin, isSuperAdmin = false }) {
       if (isAdmin && clientId) params.set("client_id", clientId);
       if (department) params.set("department", department);
       if (period && period !== "all") params.set("period", period);
+      const repTz = isAdmin
+        ? (clientId ? clientOptions.find((c) => String(c.value) === String(clientId))?.timezone || "Asia/Kolkata" : "Asia/Kolkata")
+        : undefined;
+      if (repTz) params.set("timezone", repTz);
       const qs = params.toString();
       const res = await api(`/dashboard/bot-summary${qs ? `?${qs}` : ""}`);
       setRows(res || []);
@@ -5319,6 +5324,10 @@ function FailuresView({ api, isAdmin }) {
         if (department) params.set("department", department);
         if (isAdmin && clientId) params.set("client_id", clientId);
         if (period && period !== "all") params.set("period", period);
+        const repTz = isAdmin
+          ? (clientId ? clientOptions.find((c) => String(c.value) === String(clientId))?.timezone || "Asia/Kolkata" : "Asia/Kolkata")
+          : undefined;
+        if (repTz) params.set("timezone", repTz);
         const qs = params.toString();
         const suffix = qs ? `?${qs}` : "";
         const [failures, stages] = await Promise.all([
@@ -6908,8 +6917,7 @@ function AppShell({ session, onLogout, onSessionExpired, onTokensRefreshed, them
     console.log("SESSION CLIENT ID:", session?.clientId);
 
     if (!session?.clientId) {
-      console.log("NO CLIENT ID - USING NEW YORK");
-      setClientTimezone("America/New_York");
+      setClientTimezone("Asia/Kolkata");
       return;
     }
 
@@ -6918,24 +6926,15 @@ function AppShell({ session, onLogout, onSessionExpired, onTokensRefreshed, them
     (async () => {
       try {
         const response = await api(`/clients/${session.clientId}`);
-
-        console.log("CLIENT RESPONSE:", response);
-
-        const client = response?.data;
-
-        console.log("MATCHED CLIENT:", client);
-        console.log("MATCHED TIMEZONE:", client?.timezone);
-
+        const client = response?.data || response;
         if (!cancelled) {
           setClientTimezone(
-            client?.timezone || "America/New_York"
+            client?.timezone || "Asia/Kolkata"
           );
         }
       } catch (err) {
-        console.error("Failed to load client timezone:", err);
-
         if (!cancelled) {
-          setClientTimezone("America/New_York");
+          setClientTimezone("Asia/Kolkata");
         }
       }
     })();
