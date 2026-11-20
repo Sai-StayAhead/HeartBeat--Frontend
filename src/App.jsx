@@ -2256,7 +2256,7 @@ const STAYAHEAD_INDIA_TZ = "Asia/Kolkata";
 const STAYAHEAD_US_TZ =
   (typeof window !== "undefined" && window.__STAYAHEAD_US_TIMEZONE__) ||
   (typeof import.meta !== "undefined" && import.meta.env?.VITE_STAYAHEAD_US_TIMEZONE) ||
-  "America/New_York";
+  "America/Los_Angeles";
 
 function getTimezoneAbbr(iana, date = new Date()) {
   if (!iana) return "";
