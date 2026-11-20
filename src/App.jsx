@@ -2247,6 +2247,51 @@ function ClientPerformanceCard({ totalRuns, successRate, hoursSaved }) {
   );
 }
 
+/* ------------------------------------------------------------------ */
+/* Dynamic Top Bar & Drawer Timezone Clocks                           */
+/* ------------------------------------------------------------------ */
+const STAYAHEAD_INDIA_TZ = "Asia/Kolkata";
+const STAYAHEAD_US_TZ =
+  (typeof window !== "undefined" && window.__STAYAHEAD_US_TIMEZONE__) ||
+  (typeof import.meta !== "undefined" && import.meta.env?.VITE_STAYAHEAD_US_TIMEZONE) ||
+  "America/New_York";
+
+function getTimezoneAbbr(iana, date = new Date()) {
+  if (!iana) return "";
+  try {
+    const parts = new Intl.DateTimeFormat("en-US", {
+      timeZone: iana,
+      timeZoneName: "short",
+    }).formatToParts(date);
+    const abbr = parts.find((p) => p.type === "timeZoneName")?.value;
+    if (abbr) {
+      if (iana === "Asia/Kolkata" && (abbr.includes("GMT") || abbr.includes("UTC"))) return "IST";
+      return abbr;
+    }
+  } catch (_) {}
+  if (iana === "Asia/Kolkata") return "IST";
+  if (iana === "America/New_York") return "EST";
+  if (iana === "America/Chicago") return "CST";
+  if (iana === "America/Denver") return "MST";
+  if (iana === "America/Los_Angeles") return "PST";
+  return "";
+}
+
+function formatZoneTime(date, iana, isDrawer = false) {
+  if (!iana) return "—";
+  try {
+    return new Intl.DateTimeFormat("en-US", {
+      timeZone: iana,
+      hour: "2-digit",
+      minute: "2-digit",
+      second: isDrawer ? undefined : "2-digit",
+      hour12: true,
+    }).format(date);
+  } catch (_) {
+    return "—";
+  }
+}
+
 function ClientTimezoneClocks({ timezone, isDrawer = false }) {
   const [now, setNow] = useState(new Date());
 
@@ -2258,37 +2303,27 @@ function ClientTimezoneClocks({ timezone, isDrawer = false }) {
     return () => clearInterval(timer);
   }, []);
 
-  if (!timezone) return null;
+  const clientTz = timezone || null;
+  const clientTime = formatZoneTime(now, clientTz, isDrawer);
+  const clientAbbr = getTimezoneAbbr(clientTz, now);
 
-  const clientTime = new Intl.DateTimeFormat("en-US", {
-    timeZone: timezone,
-    hour: "2-digit",
-    minute: "2-digit",
-    second: isDrawer ? undefined : "2-digit",
-    hour12: true,
-  }).format(now);
+  const stayAheadUSTime = formatZoneTime(now, STAYAHEAD_US_TZ, isDrawer);
+  const stayAheadUSAbbr = getTimezoneAbbr(STAYAHEAD_US_TZ, now);
 
-  const stayAheadUSTime = new Intl.DateTimeFormat("en-US", {
-    timeZone: "America/Los_Angeles",
-    hour: "2-digit",
-    minute: "2-digit",
-    second: isDrawer ? undefined : "2-digit",
-    hour12: true,
-  }).format(now);
-
-  const stayAheadTime = new Intl.DateTimeFormat("en-US", {
-    timeZone: "Asia/Kolkata",
-    hour: "2-digit",
-    minute: "2-digit",
-    second: isDrawer ? undefined : "2-digit",
-    hour12: true,
-  }).format(now);
+  const stayAheadIndiaTime = formatZoneTime(now, STAYAHEAD_INDIA_TZ, isDrawer);
+  const stayAheadIndiaAbbr = getTimezoneAbbr(STAYAHEAD_INDIA_TZ, now);
 
   return (
-    <div className={`hb-topbar-clocks${isDrawer ? " hb-drawer-clocks" : ""}`}>
+    <div
+      className={`hb-topbar-clocks${isDrawer ? " hb-drawer-clocks" : ""}`}
+      style={{ cursor: "default" }}
+      title={`Configured timezones: Your Time Zone (${clientTz || "Loading..."}) • StayAhead US (${STAYAHEAD_US_TZ}) • StayAhead India (${STAYAHEAD_INDIA_TZ})`}
+    >
       {/* Client Local Time */}
       <div className="hb-topbar-clock-item">
-        <div className="hb-topbar-clock-label">Your Time Zone</div>
+        <div className="hb-topbar-clock-label">
+          Your Time Zone{clientAbbr ? ` (${clientAbbr})` : ""}
+        </div>
         <div className="hb-topbar-clock-time client">{clientTime}</div>
       </div>
 
@@ -2296,7 +2331,9 @@ function ClientTimezoneClocks({ timezone, isDrawer = false }) {
 
       {/* StayAhead US */}
       <div className="hb-topbar-clock-item">
-        <div className="hb-topbar-clock-label">StayAhead US</div>
+        <div className="hb-topbar-clock-label">
+          StayAhead US{stayAheadUSAbbr ? ` (${stayAheadUSAbbr})` : ""}
+        </div>
         <div className="hb-topbar-clock-time">{stayAheadUSTime}</div>
       </div>
 
@@ -2304,8 +2341,10 @@ function ClientTimezoneClocks({ timezone, isDrawer = false }) {
 
       {/* StayAhead India */}
       <div className="hb-topbar-clock-item">
-        <div className="hb-topbar-clock-label">StayAhead India</div>
-        <div className="hb-topbar-clock-time">{stayAheadTime}</div>
+        <div className="hb-topbar-clock-label">
+          StayAhead India{stayAheadIndiaAbbr ? ` (${stayAheadIndiaAbbr})` : ""}
+        </div>
+        <div className="hb-topbar-clock-time">{stayAheadIndiaTime}</div>
       </div>
     </div>
   );
@@ -6205,7 +6244,7 @@ function TimezoneClock({ label, timezone }) {
   );
 }
 
-function StayAheadClocks({ isDrawer = false, onOpenPlanner }) {
+function StayAheadClocks({ timezone, isDrawer = false, onOpenPlanner }) {
   const [now, setNow] = useState(new Date());
 
   useEffect(() => {
@@ -6216,21 +6255,15 @@ function StayAheadClocks({ isDrawer = false, onOpenPlanner }) {
     return () => clearInterval(timer);
   }, []);
 
-  const stayAheadESTTime = new Intl.DateTimeFormat("en-US", {
-    timeZone: "America/New_York",
-    hour: "2-digit",
-    minute: "2-digit",
-    second: isDrawer ? undefined : "2-digit",
-    hour12: true,
-  }).format(now);
+  const hasCustomTz = timezone && timezone !== STAYAHEAD_INDIA_TZ && timezone !== STAYAHEAD_US_TZ;
+  const userTime = hasCustomTz ? formatZoneTime(now, timezone, isDrawer) : null;
+  const userAbbr = hasCustomTz ? getTimezoneAbbr(timezone, now) : null;
 
-  const stayAheadIndiaTime = new Intl.DateTimeFormat("en-US", {
-    timeZone: "Asia/Kolkata",
-    hour: "2-digit",
-    minute: "2-digit",
-    second: isDrawer ? undefined : "2-digit",
-    hour12: true,
-  }).format(now);
+  const stayAheadUSTime = formatZoneTime(now, STAYAHEAD_US_TZ, isDrawer);
+  const stayAheadUSAbbr = getTimezoneAbbr(STAYAHEAD_US_TZ, now);
+
+  const stayAheadIndiaTime = formatZoneTime(now, STAYAHEAD_INDIA_TZ, isDrawer);
+  const stayAheadIndiaAbbr = getTimezoneAbbr(STAYAHEAD_INDIA_TZ, now);
 
   return (
     <div
@@ -6239,17 +6272,33 @@ function StayAheadClocks({ isDrawer = false, onOpenPlanner }) {
       role={onOpenPlanner ? "button" : undefined}
       tabIndex={onOpenPlanner ? 0 : undefined}
       style={{ cursor: onOpenPlanner ? "pointer" : "default" }}
-      title={onOpenPlanner ? "Click to open Timezone Mapping & Meeting Planner" : undefined}
+      title={onOpenPlanner ? "Click to open Timezone Mapping & Meeting Planner" : `Configured timezones: StayAhead US (${STAYAHEAD_US_TZ}) • StayAhead India (${STAYAHEAD_INDIA_TZ})`}
     >
+      {hasCustomTz && (
+        <>
+          <div className="hb-topbar-clock-item">
+            <div className="hb-topbar-clock-label">
+              Your Time Zone{userAbbr ? ` (${userAbbr})` : ""}
+            </div>
+            <div className="hb-topbar-clock-time client">{userTime}</div>
+          </div>
+          <div className="hb-topbar-clock-divider" />
+        </>
+      )}
+
       <div className="hb-topbar-clock-item">
-        <div className="hb-topbar-clock-label">StayAhead US (EST)</div>
-        <div className="hb-topbar-clock-time">{stayAheadESTTime}</div>
+        <div className="hb-topbar-clock-label">
+          StayAhead US{stayAheadUSAbbr ? ` (${stayAheadUSAbbr})` : ""}
+        </div>
+        <div className="hb-topbar-clock-time">{stayAheadUSTime}</div>
       </div>
 
       <div className="hb-topbar-clock-divider" />
 
       <div className="hb-topbar-clock-item">
-        <div className="hb-topbar-clock-label">StayAhead India (IST)</div>
+        <div className="hb-topbar-clock-label">
+          StayAhead India{stayAheadIndiaAbbr ? ` (${stayAheadIndiaAbbr})` : ""}
+        </div>
         <div className="hb-topbar-clock-time">{stayAheadIndiaTime}</div>
       </div>
 
@@ -6914,10 +6963,10 @@ function AppShell({ session, onLogout, onSessionExpired, onTokensRefreshed, them
   }, [baseUrl, token, currentUserId]);
 
   useEffect(() => {
-    console.log("SESSION CLIENT ID:", session?.clientId);
+    const effectiveClientId = session?.clientId || session?.client_id;
 
-    if (!session?.clientId) {
-      setClientTimezone("Asia/Kolkata");
+    if (!effectiveClientId) {
+      setClientTimezone(session?.timezone || "Asia/Kolkata");
       return;
     }
 
@@ -6925,7 +6974,7 @@ function AppShell({ session, onLogout, onSessionExpired, onTokensRefreshed, them
 
     (async () => {
       try {
-        const response = await api(`/clients/${session.clientId}`);
+        const response = await api(`/clients/${effectiveClientId}`);
         const client = response?.data || response;
         if (!cancelled) {
           setClientTimezone(
@@ -6934,7 +6983,7 @@ function AppShell({ session, onLogout, onSessionExpired, onTokensRefreshed, them
         }
       } catch (err) {
         if (!cancelled) {
-          setClientTimezone("Asia/Kolkata");
+          setClientTimezone(session?.timezone || "Asia/Kolkata");
         }
       }
     })();
@@ -6942,7 +6991,7 @@ function AppShell({ session, onLogout, onSessionExpired, onTokensRefreshed, them
     return () => {
       cancelled = true;
     };
-  }, [api, session?.clientId]);
+  }, [api, session?.clientId, session?.client_id, session?.timezone]);
 
   useEffect(() => {
     let cancelled = false;
@@ -7076,7 +7125,11 @@ function AppShell({ session, onLogout, onSessionExpired, onTokensRefreshed, them
 
         <div className="hb-sidebar-footer">
           <div className="hb-sidebar-drawer-clocks">
-            {isTimezoneVisible ? <StayAheadClocks isDrawer /> : null}
+            {role === "client" ? (
+              <ClientTimezoneClocks timezone={clientTimezone} isDrawer />
+            ) : (
+              <StayAheadClocks timezone={clientTimezone} isDrawer />
+            )}
           </div>
           <ProfileMenu email={email} role={role} onLogout={onLogout} theme={theme} toggleTheme={toggleTheme} />
         </div>
@@ -7105,9 +7158,14 @@ function AppShell({ session, onLogout, onSessionExpired, onTokensRefreshed, them
 
             </div>
           </div>
-          {isTimezoneVisible ? (
-            <StayAheadClocks onOpenPlanner={() => setTimezoneModalOpen(true)} />
-          ) : null}
+          {role === "client" ? (
+            <ClientTimezoneClocks timezone={clientTimezone} />
+          ) : (
+            <StayAheadClocks
+              timezone={clientTimezone}
+              onOpenPlanner={isTimezoneVisible ? () => setTimezoneModalOpen(true) : undefined}
+            />
+          )}
 
 
           <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
