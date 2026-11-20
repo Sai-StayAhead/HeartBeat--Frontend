@@ -243,24 +243,72 @@ export function handleWebSocketSoundEvent(data, currentUserId) {
     return;
   }
 
-  // Do not play sound if the current user is the sender
+  const isNotification =
+    data.event === "new_notification" ||
+    data.event === "notification" ||
+    data.event === "action_item_assigned" ||
+    data.sound_type === "action_item" ||
+    data.soundType === "action_item" ||
+    data.notification_id != null ||
+    data.notification_type != null;
+
+  // Identify the sender/actor who initiated the action.
+  // For notifications: actor_user_id / actor_id / created_by is the sender/creator.
+  // For messages: sender_user_id / sender_id is the sender.
+  // NOTE: On notification payloads, 'user_id' represents the target assigned user (receiver),
+  // NEVER the sender/creator.
   const senderId =
+    data.actor_user_id ??
+    data.actor_id ??
+    data.created_by ??
     data.sender_user_id ??
     data.sender_id ??
-    data.user_id ??
+    data.data?.actor_user_id ??
+    data.data?.actor_id ??
+    data.data?.created_by ??
     data.data?.sender_user_id ??
-    data.data?.sender_id;
+    data.data?.sender_id ??
+    (!isNotification ? (data.user_id ?? data.data?.user_id) : null);
 
+  // Do not play sound if the current user is the sender / creator of this item/message
   if (
     senderId != null &&
     currentUserId != null &&
     String(senderId) === String(currentUserId)
   ) {
     console.log(
-      "🔇 Message sound skipped — current user is the sender:",
+      "🔇 Sound skipped — current user is the sender/actor:",
       currentUserId
     );
     return;
+  }
+
+  // For targeted notifications (e.g. action item assigned to a specific user):
+  // Ensure only the assigned recipient plays the sound, not other uninvolved users.
+  if (isNotification) {
+    const targetUserId =
+      data.user_id ??
+      data.target_user_id ??
+      data.assigned_user_id ??
+      data.recipient_id ??
+      data.data?.user_id ??
+      data.data?.target_user_id ??
+      data.data?.assigned_user_id;
+
+    if (
+      targetUserId != null &&
+      currentUserId != null &&
+      String(targetUserId) !== String(currentUserId)
+    ) {
+      console.log(
+        "🔇 Notification sound skipped — targeted to another user:",
+        targetUserId,
+        "(current:",
+        currentUserId,
+        ")"
+      );
+      return;
+    }
   }
 
   // Prevent duplicate WebSocket events from firing multiple sounds.

@@ -69,14 +69,7 @@ function getTimezoneDelta(date, sourceIana, targetIana = "Asia/Kolkata") {
 // ─── Micro Components ─────────────────────────────────────────
 function CodeBadge({ code, accent }) {
   return (
-    <span style={{
-      fontFamily: "var(--font-mono)", fontSize: 10, fontWeight: 700,
-      padding: "2px 6px", borderRadius: 4,
-      background: accent ? "var(--accent-dim)" : "var(--surface-3)",
-      border: `1px solid ${accent ? "var(--accent)" : "var(--border)"}`,
-      color: accent ? "var(--accent)" : "var(--text-dim)",
-      letterSpacing: "0.04em",
-    }}>
+    <span className={`hb-tz-code-badge ${accent ? "is-accent" : ""}`}>
       {code}
     </span>
   );
@@ -85,12 +78,9 @@ function CodeBadge({ code, accent }) {
 function StatusDot({ status }) {
   const Icon = status.iconName === "briefcase" ? Briefcase : status.iconName === "sparkles" ? Sparkles : Moon;
   return (
-    <span style={{
-      display: "inline-flex", alignItems: "center", gap: 4,
-      fontSize: 11, fontWeight: 600, color: status.color, whiteSpace: "nowrap",
-    }}>
-      <span style={{ width: 5, height: 5, borderRadius: "50%", background: status.color, flexShrink: 0 }} />
-      <Icon size={11} />
+    <span className="hb-tz-status-badge" style={{ color: status.color }}>
+      <span className="hb-tz-status-dot" style={{ backgroundColor: status.color }} />
+      <Icon size={11} className="hb-tz-status-icon" />
       <span>{status.label}</span>
     </span>
   );
@@ -278,23 +268,21 @@ export default function TimezonePlanner({ api, isModal = false, onClose }) {
 
   // ─── Render ───────────────────────────────────────────────
   return (
-    <div className="hb-tz" style={{ padding: isModal ? "4px 0" : "2px 0" }}>
+    <div className={`hb-tz ${isModal ? "is-modal" : ""}`}>
 
       {/* ── Header ──────────────────────────────────────────── */}
       <div className="hb-tz-header">
-        <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
-          <div style={{
-            width: 34, height: 34, borderRadius: 9,
-            background: "var(--accent-dim)", color: "var(--accent)",
-            display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0,
-          }}>
-            <Globe size={18} />
+        <div className="hb-tz-header-left">
+          <div className="hb-tz-header-icon-wrap">
+            <Globe size={22} />
           </div>
-          <div>
-            <h2 style={{ margin: 0, fontSize: 17, fontWeight: 700, color: "var(--text)", lineHeight: 1.3 }}>
-              Timezone Mapping & Meeting Planner
-            </h2>
-            <p style={{ margin: 0, fontSize: 12, color: "var(--text-dim)", lineHeight: 1.4 }}>
+          <div className="hb-tz-header-titles">
+            <div className="hb-tz-header-pill">
+              <span className="hb-tz-header-pill-dot" />
+              <span>Operations Fleet Sync</span>
+            </div>
+            <h2 className="hb-tz-title">Timezones & Meeting Planner</h2>
+            <p className="hb-tz-subtitle">
               US enterprise hubs and India operations time alignment
             </p>
           </div>
@@ -302,25 +290,25 @@ export default function TimezonePlanner({ api, isModal = false, onClose }) {
 
         <div className="hb-tz-header-actions">
           {clients.length > 0 && (
-            <select
-              value={selectedClientId}
-              onChange={(e) => handleClientSelect(e.target.value)}
-              style={{
-                background: "var(--surface)", color: "var(--text)",
-                border: "1px solid var(--border)", borderRadius: 7,
-                padding: "6px 10px", fontSize: 12, outline: "none", cursor: "pointer", fontWeight: 600,
-              }}
-            >
-              <option value="">-- Select Client --</option>
-              {clients.map((c) => (
-                <option key={c.client_id} value={c.client_id}>
-                  {c.client_name} ({c.timezone.split("/").pop().replace(/_/g, " ")})
-                </option>
-              ))}
-            </select>
+            <div className="hb-tz-select-wrap">
+              <Building2 size={14} className="hb-tz-select-icon" />
+              <select
+                value={selectedClientId}
+                onChange={(e) => handleClientSelect(e.target.value)}
+                className="hb-tz-client-select"
+                aria-label="Select client timezone"
+              >
+                <option value="">-- Select Client Timezone --</option>
+                {clients.map((c) => (
+                  <option key={c.client_id} value={c.client_id}>
+                    {c.client_name} ({c.timezone.split("/").pop().replace(/_/g, " ")})
+                  </option>
+                ))}
+              </select>
+            </div>
           )}
           {isModal && onClose && (
-            <button onClick={onClose} className="hb-tz-btn-secondary" style={{ padding: "6px 12px" }}>
+            <button type="button" onClick={onClose} className="hb-tz-btn-secondary hb-tz-modal-close">
               Close
             </button>
           )}
@@ -335,22 +323,23 @@ export default function TimezonePlanner({ api, isModal = false, onClose }) {
           const status = getHourWorkStatus(hour);
           const isIst = tz.key === "IST";
           return (
-            <div key={tz.key} className={`hb-tz-clock-item${isIst ? " --accent" : ""}`}>
-              <div style={{ display: "flex", alignItems: "center", gap: 5 }}>
-                <CodeBadge code={tz.code} accent={isIst} />
-                <span style={{ fontSize: 11.5, fontWeight: 700, color: isIst ? "var(--accent)" : "var(--text)" }}>
-                  {tz.key}
-                </span>
+            <div key={tz.key} className={`hb-tz-clock-card ${isIst ? "is-ist" : ""}`}>
+              <div className="hb-tz-clock-top">
+                <div className="hb-tz-clock-zone-badge">
+                  <CodeBadge code={tz.code} accent={isIst} />
+                  <span className="hb-tz-clock-key">{tz.key}</span>
+                </div>
+                <span className="hb-tz-clock-offset">{tz.offsetNote}</span>
               </div>
-              <span style={{
-                fontFamily: "var(--font-mono)", fontSize: 16, fontWeight: 800, letterSpacing: "-0.3px",
-                color: isIst ? "var(--accent)" : "var(--text)",
-              }}>
-                {timeStr}
-              </span>
-              <div style={{ display: "flex", alignItems: "center", gap: 4 }}>
-                <span style={{ width: 5, height: 5, borderRadius: "50%", background: status.color }} />
-                <span style={{ fontSize: 10, color: "var(--text-dim)" }}>{status.label}</span>
+              <div className="hb-tz-clock-time-wrap">
+                <span className="hb-tz-clock-time">{timeStr}</span>
+              </div>
+              <div className="hb-tz-clock-meta">
+                <span className="hb-tz-clock-city" title={tz.city}>{tz.region}</span>
+                <div className="hb-tz-clock-status">
+                  <span className="hb-tz-status-indicator" style={{ backgroundColor: status.color }} />
+                  <span style={{ color: status.color }}>{status.label}</span>
+                </div>
               </div>
             </div>
           );
@@ -362,151 +351,143 @@ export default function TimezonePlanner({ api, isModal = false, onClose }) {
 
         {/* Controls: Presets + Date */}
         <div className="hb-tz-controls">
-          <div className="hb-tz-presets">
-            <span style={{ fontSize: 10.5, fontWeight: 700, color: "var(--text-dim)", textTransform: "uppercase", letterSpacing: "0.03em" }}>
-              Presets:
+          <div className="hb-tz-presets-wrap">
+            <span className="hb-tz-presets-label">
+              <Clock size={12} /> Presets:
             </span>
-            {quickPresets.map((preset, idx) => {
-              const isActive = sourceZoneKey === preset.zone && selectedHour === preset.hour && selectedMinute === preset.min;
-              return (
-                <button
-                  key={idx}
-                  type="button"
-                  onClick={() => applyPreset(preset)}
-                  className={`hb-tz-preset-btn${isActive ? " --active" : ""}`}
-                >
-                  {preset.label}
-                </button>
-              );
-            })}
+            <div className="hb-tz-presets">
+              {quickPresets.map((preset, idx) => {
+                const isActive = sourceZoneKey === preset.zone && selectedHour === preset.hour && selectedMinute === preset.min;
+                return (
+                  <button
+                    key={idx}
+                    type="button"
+                    onClick={() => applyPreset(preset)}
+                    className={`hb-tz-preset-btn ${isActive ? "is-active" : ""}`}
+                  >
+                    {preset.label}
+                  </button>
+                );
+              })}
+            </div>
           </div>
-          <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
-            <span style={{ fontSize: 11, color: "var(--text-dim)", fontWeight: 600 }}>Date:</span>
-            <input
-              type="date"
-              value={selectedDateStr}
-              onChange={(e) => setSelectedDateStr(e.target.value)}
-              style={{
-                background: "var(--surface-2)", color: "var(--text)",
-                border: "1px solid var(--border)", borderRadius: 6,
-                padding: "5px 8px", fontSize: 12, outline: "none", fontWeight: 600,
-              }}
-            />
+          <div className="hb-tz-date-picker-wrap">
+            <span className="hb-tz-date-label">Date:</span>
+            <div className="hb-tz-date-input-box">
+              <CalendarClock size={13} className="hb-tz-date-icon" />
+              <input
+                type="date"
+                value={selectedDateStr}
+                onChange={(e) => setSelectedDateStr(e.target.value)}
+                className="hb-tz-date-input"
+              />
+            </div>
           </div>
         </div>
 
         {/* Time Bridge: Source → IST */}
         <div className="hb-tz-bridge">
           {/* Left Pane — Source Zone */}
-          <div className="hb-tz-pane">
-            <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 8 }}>
-              <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
+          <div className="hb-tz-pane is-source">
+            <div className="hb-tz-pane-header">
+              <div className="hb-tz-pane-zone-select">
                 <CodeBadge code={sourceZone.code} />
-                <select
-                  value={sourceZoneKey}
-                  onChange={(e) => { setSourceZoneKey(e.target.value); setSelectedClientId(""); }}
-                  style={{
-                    background: "transparent", color: "var(--text)", border: "none",
-                    fontWeight: 700, fontSize: 13, outline: "none", cursor: "pointer", padding: 0,
-                    fontFamily: "var(--font-body)",
-                  }}
-                >
-                  {TIMEZONES.map((tz) => (
-                    <option key={tz.key} value={tz.key} style={{ background: "var(--surface)", color: "var(--text)" }}>
-                      {tz.label}
-                    </option>
-                  ))}
-                </select>
+                <div className="hb-tz-select-inline-wrap">
+                  <select
+                    value={sourceZoneKey}
+                    onChange={(e) => { setSourceZoneKey(e.target.value); setSelectedClientId(""); }}
+                    className="hb-tz-source-select"
+                  >
+                    {TIMEZONES.map((tz) => (
+                      <option key={tz.key} value={tz.key}>
+                        {tz.label}
+                      </option>
+                    ))}
+                  </select>
+                </div>
               </div>
               <StatusDot status={sourceConversion?.status || { tone: "success", label: "Active", color: "var(--success)", iconName: "briefcase" }} />
             </div>
 
-            <div style={{ display: "flex", alignItems: "baseline", gap: 4, margin: "4px 0" }}>
-              <select
-                value={selectedHour}
-                onChange={(e) => setSelectedHour(Number(e.target.value))}
-                style={{
-                  fontFamily: "var(--font-mono)", fontSize: 30, fontWeight: 800,
-                  color: "var(--text)", background: "transparent", border: "none",
-                  outline: "none", cursor: "pointer", padding: 0,
-                }}
-              >
-                {Array.from({ length: 24 }).map((_, h) => {
-                  const ampm = h >= 12 ? "PM" : "AM";
-                  const displayH = h % 12 === 0 ? 12 : h % 12;
-                  return (
-                    <option key={h} value={h} style={{ background: "var(--surface)", color: "var(--text)", fontSize: 14 }}>
-                      {displayH}:00 {ampm}
-                    </option>
-                  );
-                })}
-              </select>
-              <select
-                value={selectedMinute}
-                onChange={(e) => setSelectedMinute(Number(e.target.value))}
-                style={{
-                  fontFamily: "var(--font-mono)", fontSize: 20, fontWeight: 700,
-                  color: "var(--text-muted)", background: "transparent", border: "none",
-                  outline: "none", cursor: "pointer", padding: 0,
-                }}
-              >
-                <option value={0} style={{ background: "var(--surface)" }}>:00</option>
-                <option value={15} style={{ background: "var(--surface)" }}>:15</option>
-                <option value={30} style={{ background: "var(--surface)" }}>:30</option>
-                <option value={45} style={{ background: "var(--surface)" }}>:45</option>
-              </select>
-              <span style={{ fontSize: 13, fontWeight: 700, color: "var(--text-dim)", marginLeft: 4 }}>
-                {sourceZone.key}
-              </span>
+            <div className="hb-tz-time-dial-wrap">
+              <div className="hb-tz-time-dial">
+                <select
+                  value={selectedHour}
+                  onChange={(e) => setSelectedHour(Number(e.target.value))}
+                  className="hb-tz-dial-select hour-select"
+                  aria-label="Select hour"
+                >
+                  {Array.from({ length: 24 }).map((_, h) => {
+                    const ampm = h >= 12 ? "PM" : "AM";
+                    const displayH = h % 12 === 0 ? 12 : h % 12;
+                    return (
+                      <option key={h} value={h}>
+                        {displayH}:00 {ampm}
+                      </option>
+                    );
+                  })}
+                </select>
+                <span className="hb-tz-time-separator">:</span>
+                <select
+                  value={selectedMinute}
+                  onChange={(e) => setSelectedMinute(Number(e.target.value))}
+                  className="hb-tz-dial-select min-select"
+                  aria-label="Select minute"
+                >
+                  <option value={0}>00</option>
+                  <option value={15}>15</option>
+                  <option value={30}>30</option>
+                  <option value={45}>45</option>
+                </select>
+                <span className="hb-tz-time-zone-tag">
+                  {sourceZone.key}
+                </span>
+              </div>
             </div>
 
-            <div style={{ fontSize: 11.5, color: "var(--text-dim)", display: "flex", alignItems: "center", gap: 5 }}>
+            <div className="hb-tz-pane-footer">
               <span>{sourceConversion?.dateStr}</span>
-              <span style={{ opacity: 0.4 }}>|</span>
+              <span className="hb-tz-pane-dot">|</span>
               <span>{sourceZone.city}</span>
             </div>
           </div>
 
           {/* Center Connector */}
           <div className="hb-tz-connector">
-            <div style={{
-              width: 34, height: 34, borderRadius: "50%",
-              background: "var(--surface-3)", border: "1px solid var(--border)",
-              display: "flex", alignItems: "center", justifyContent: "center", color: "var(--text-muted)",
-            }}>
-              <ArrowRightLeft size={14} />
+            <div className="hb-tz-connector-line" />
+            <div className="hb-tz-connector-badge">
+              <div className="hb-tz-connector-icon">
+                <ArrowRightLeft size={15} />
+              </div>
+              <div className="hb-tz-connector-text">
+                {istDelta.deltaStr} {istDelta.direction !== "Same Time" ? istDelta.direction : ""}
+              </div>
             </div>
-            <div style={{
-              fontSize: 11, fontWeight: 700, color: "var(--accent)",
-              background: "var(--accent-dim)", padding: "3px 10px", borderRadius: 6,
-              whiteSpace: "nowrap", fontFamily: "var(--font-mono)",
-            }}>
-              {istDelta.deltaStr} {istDelta.direction !== "Same Time" ? istDelta.direction : ""}
-            </div>
+            <div className="hb-tz-connector-line" />
           </div>
 
           {/* Right Pane — IST Target */}
-          <div className="hb-tz-pane --target">
-            <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 8 }}>
-              <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
+          <div className="hb-tz-pane is-target">
+            <div className="hb-tz-pane-header">
+              <div className="hb-tz-target-label">
                 <CodeBadge code="IN" accent />
-                <span style={{ fontSize: 13, fontWeight: 700, color: "var(--accent)" }}>
+                <span className="hb-tz-target-title">
                   India Standard Time (IST)
                 </span>
               </div>
               <StatusDot status={istConversion?.status || { tone: "success", label: "Active", color: "var(--success)", iconName: "briefcase" }} />
             </div>
 
-            <div style={{
-              fontFamily: "var(--font-mono)", fontSize: 30, fontWeight: 800,
-              color: "var(--accent)", margin: "4px 0", letterSpacing: "-0.5px",
-            }}>
-              {istConversion?.timeStr}
+            <div className="hb-tz-target-time-wrap">
+              <span className="hb-tz-target-time">
+                {istConversion?.timeStr}
+              </span>
+              <span className="hb-tz-time-zone-tag accent">IST</span>
             </div>
 
-            <div style={{ fontSize: 11.5, color: "var(--text-dim)", display: "flex", alignItems: "center", gap: 5 }}>
+            <div className="hb-tz-pane-footer">
               <span>{istConversion?.dateStr}</span>
-              <span style={{ opacity: 0.4 }}>|</span>
+              <span className="hb-tz-pane-dot">|</span>
               <span>New Delhi / Mumbai / Bengaluru</span>
             </div>
           </div>
@@ -526,22 +507,21 @@ export default function TimezonePlanner({ api, isModal = false, onClose }) {
             </thead>
             <tbody>
               {conversions.map((conv) => (
-                <tr key={conv.key} className={conv.isSource ? "--source" : ""}>
+                <tr key={conv.key} className={conv.isSource ? "is-source-row" : conv.key === "IST" ? "is-ist-row" : ""}>
                   <td>
-                    <div style={{ display: "inline-flex", alignItems: "center", gap: 6 }}>
+                    <div className="hb-tz-table-zone-cell">
                       <CodeBadge code={conv.code} accent={conv.key === "IST"} />
-                      <span style={{ fontWeight: 700, fontSize: 12.5 }}>{conv.key}</span>
-                      <span style={{ color: "var(--text-dim)", fontSize: 11 }}>({conv.offsetNote})</span>
+                      <span className="hb-tz-table-key">{conv.key}</span>
+                      <span className="hb-tz-table-offset">({conv.offsetNote})</span>
                     </div>
                   </td>
-                  <td style={{ color: "var(--text-dim)", fontSize: 12 }}>{conv.city}</td>
-                  <td style={{
-                    fontFamily: "var(--font-mono)", fontWeight: 700,
-                    color: conv.key === "IST" ? "var(--accent)" : "var(--text)", fontSize: 13,
-                  }}>
-                    {conv.timeStr}
+                  <td className="hb-tz-table-city">{conv.city}</td>
+                  <td>
+                    <span className={`hb-tz-table-time ${conv.key === "IST" ? "is-ist" : ""}`}>
+                      {conv.timeStr}
+                    </span>
                   </td>
-                  <td style={{ color: "var(--text-muted)", fontSize: 12 }}>{conv.dateStr}</td>
+                  <td className="hb-tz-table-date">{conv.dateStr}</td>
                   <td><StatusDot status={conv.status} /></td>
                 </tr>
               ))}
@@ -551,23 +531,27 @@ export default function TimezonePlanner({ api, isModal = false, onClose }) {
 
         {/* 24-Hour Overlap Timeline */}
         <div className="hb-tz-timeline">
-          <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 8 }}>
-            <span style={{
-              fontSize: 10.5, fontWeight: 700, textTransform: "uppercase", color: "var(--text-dim)",
-              display: "flex", alignItems: "center", gap: 5, letterSpacing: "0.03em",
-            }}>
-              <Sparkles size={12} style={{ color: "var(--accent)" }} /> 24-Hour Sync Track
-            </span>
-            <span style={{ fontSize: 10.5, color: "var(--accent)", fontWeight: 600 }}>
-              Golden Overlap: 8:30 AM - 11:30 AM EST = 7:00 PM - 10:00 PM IST
-            </span>
+          <div className="hb-tz-timeline-header">
+            <div className="hb-tz-timeline-title">
+              <Sparkles size={13} className="hb-tz-sparkle-icon" />
+              <span>24-Hour Operations Sync Track</span>
+            </div>
+            <div className="hb-tz-overlap-callout">
+              <span className="hb-tz-overlap-dot" />
+              <span className="hb-tz-overlap-label">Golden Overlap:</span>
+              <span className="hb-tz-overlap-times">
+                8:30 AM – 11:30 AM EST = 7:00 PM – 10:00 PM IST
+              </span>
+            </div>
           </div>
 
-          <div style={{ overflowX: "auto" }}>
-            <div style={{ minWidth: 600 }}>
+          <div className="hb-tz-timeline-scroll">
+            <div className="hb-tz-timeline-track">
               {/* EST row */}
               <div className="hb-tz-tl-row">
-                <span className="hb-tz-tl-label" style={{ color: "var(--text-dim)" }}>EST</span>
+                <div className="hb-tz-tl-label-col">
+                  <span className="hb-tz-tl-pill">EST</span>
+                </div>
                 <div className="hb-tz-tl-grid">
                   {Array.from({ length: 24 }).map((_, h) => {
                     const isOverlap = h >= 8 && h <= 12;
@@ -576,14 +560,9 @@ export default function TimezonePlanner({ api, isModal = false, onClose }) {
                       <button
                         key={h}
                         type="button"
-                        className="hb-tz-tl-cell"
+                        className={`hb-tz-tl-cell ${isSelected ? "is-selected" : ""} ${isOverlap ? "is-overlap" : ""}`}
                         onClick={() => { setSourceZoneKey("EST"); setSelectedHour(h); setSelectedClientId(""); }}
-                        title={`EST ${h}:00`}
-                        style={{
-                          background: isSelected ? "var(--accent)" : isOverlap ? "rgba(16,185,129,0.25)" : "var(--surface-2)",
-                          color: isSelected ? "#fff" : isOverlap ? "var(--success)" : "var(--text-dim)",
-                          borderColor: isSelected ? "var(--accent)" : "transparent",
-                        }}
+                        title={`Select EST ${h}:00`}
                       >
                         {h}
                       </button>
@@ -593,7 +572,9 @@ export default function TimezonePlanner({ api, isModal = false, onClose }) {
               </div>
               {/* IST row */}
               <div className="hb-tz-tl-row">
-                <span className="hb-tz-tl-label" style={{ color: "var(--accent)" }}>IST</span>
+                <div className="hb-tz-tl-label-col">
+                  <span className="hb-tz-tl-pill is-ist">IST</span>
+                </div>
                 <div className="hb-tz-tl-grid">
                   {Array.from({ length: 24 }).map((_, h) => {
                     const istH = (h + 10) % 24;
@@ -602,12 +583,7 @@ export default function TimezonePlanner({ api, isModal = false, onClose }) {
                     return (
                       <div
                         key={h}
-                        className="hb-tz-tl-cell"
-                        style={{
-                          background: isSelected ? "var(--accent-dim)" : isOverlap ? "rgba(16,185,129,0.15)" : "var(--surface-3)",
-                          color: isOverlap ? "var(--success)" : "var(--text-dim)",
-                          cursor: "default",
-                        }}
+                        className={`hb-tz-tl-cell is-readonly ${isSelected ? "is-selected-match" : ""} ${isOverlap ? "is-overlap" : ""}`}
                       >
                         {istH}
                       </div>
@@ -621,39 +597,42 @@ export default function TimezonePlanner({ api, isModal = false, onClose }) {
 
         {/* Actions */}
         <div className="hb-tz-actions">
-          <div style={{ display: "flex", gap: 8, flexWrap: "wrap", alignItems: "center" }}>
-            <button type="button" onClick={handleCopy} className="hb-tz-btn-primary"
-              style={{ background: copied ? "var(--success)" : undefined }}
+          <div className="hb-tz-action-buttons">
+            <button
+              type="button"
+              onClick={handleCopy}
+              className={`hb-tz-btn-primary ${copied ? "is-copied" : ""}`}
             >
               {copied ? <Check size={14} /> : <Copy size={14} />}
-              <span>{copied ? "Copied!" : "Copy Meeting Details"}</span>
+              <span>{copied ? "Copied Meeting Details!" : "Copy Meeting Details"}</span>
             </button>
 
             <a
               href={teamsMeetingUrl}
               target="_blank"
               rel="noopener noreferrer"
-              className="hb-tz-btn-secondary"
+              className="hb-tz-btn-secondary hb-tz-btn-teams"
               title="Open Microsoft Teams (Desktop / Web) with pre-selected time"
             >
-              <Video size={14} style={{ color: "#6264a7" }} />
+              <Video size={14} className="hb-tz-btn-teams-icon" />
               <span>Schedule in Teams</span>
-              <ExternalLink size={11} style={{ opacity: 0.5 }} />
+              <ExternalLink size={11} className="hb-tz-external-icon" />
             </a>
 
             <button
               type="button"
               onClick={handleOpenOutlook}
-              className="hb-tz-btn-secondary"
+              className="hb-tz-btn-secondary hb-tz-btn-outlook"
               title="Open Desktop Outlook appointment with pre-selected time"
             >
-              <CalendarPlus size={14} style={{ color: "var(--accent)" }} />
+              <CalendarPlus size={14} className="hb-tz-btn-outlook-icon" />
               <span>Open in Outlook</span>
             </button>
           </div>
-          <span style={{ fontSize: 11, color: "var(--text-dim)", display: "inline-flex", alignItems: "center", gap: 4 }}>
-            <Building2 size={12} /> Auto-synced with Daylight Saving Time (DST)
-          </span>
+          <div className="hb-tz-dst-badge">
+            <Building2 size={12} />
+            <span>Auto-synced with Daylight Saving Time (DST)</span>
+          </div>
         </div>
       </div>
     </div>

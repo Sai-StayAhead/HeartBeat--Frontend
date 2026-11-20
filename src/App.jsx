@@ -691,13 +691,38 @@ function localDateStr(d) {
   const day = String(d.getDate()).padStart(2, "0");
   return `${y}-${m}-${day}`;
 }
-function getTodayStr() {
-  return localDateStr(new Date());
+function getTodayStr(tz) {
+  if (!tz) return localDateStr(new Date());
+  try {
+    return new Intl.DateTimeFormat("en-CA", {
+      timeZone: tz,
+      year: "numeric",
+      month: "2-digit",
+      day: "2-digit",
+    }).format(new Date());
+  } catch (_) {
+    return localDateStr(new Date());
+  }
 }
-function getYesterdayStr() {
-  const d = new Date();
-  d.setDate(d.getDate() - 1);
-  return localDateStr(d);
+function getYesterdayStr(tz) {
+  if (!tz) {
+    const d = new Date();
+    d.setDate(d.getDate() - 1);
+    return localDateStr(d);
+  }
+  try {
+    const yesterday = new Date(Date.now() - 86400000);
+    return new Intl.DateTimeFormat("en-CA", {
+      timeZone: tz,
+      year: "numeric",
+      month: "2-digit",
+      day: "2-digit",
+    }).format(yesterday);
+  } catch (_) {
+    const d = new Date();
+    d.setDate(d.getDate() - 1);
+    return localDateStr(d);
+  }
 }
 /* Finds the row in a daily trend array (e.g. run-trend, hours-saved-trend)
    whose date field matches the given date string. */
@@ -719,7 +744,7 @@ function pctChange(curr, prev) {
   return Math.round(((curr - prev) / prev) * 100);
 }
 
-const DEFAULT_DISPLAY_TIMEZONE = "Asia/Kolkata";
+const DEFAULT_DISPLAY_TIMEZONE = "America/New_York";
 
 function parseServerDate(iso) {
   if (!iso) return null;
@@ -736,8 +761,9 @@ function getLocalDateStr(iso, timezone = DEFAULT_DISPLAY_TIMEZONE) {
   const date = parseServerDate(iso);
   if (!date) return "";
   try {
+    const tz = timezone || DEFAULT_DISPLAY_TIMEZONE;
     const formatter = new Intl.DateTimeFormat("en-CA", {
-      timeZone: timezone,
+      timeZone: tz,
       year: "numeric",
       month: "2-digit",
       day: "2-digit",
@@ -2604,7 +2630,7 @@ function UsersView({ api, currentEmail }) {
   );
 }
 
-function DashboardView({ api, wsConnected, liveEvents, isAdmin, isSuperAdmin = false, role, session, onNavigateView }) {
+function DashboardView({ api, wsConnected, liveEvents, isAdmin, isSuperAdmin = false, role, session, onNavigateView, clientTimezoneProp }) {
   const effectiveSuperAdmin = isSuperAdmin || role === "admin";
   const [summary, setSummary] = useState(null);
   const [recent, setRecent] = useState([]);
@@ -2622,9 +2648,31 @@ function DashboardView({ api, wsConnected, liveEvents, isAdmin, isSuperAdmin = f
   const [historyExpanded, setHistoryExpanded] = useState(true);
   const [period, setPeriod] = useState("day");
 
-  const [clientTimezone, setClientTimezone] = useState(null);
   const departmentOptions = useDepartmentOptions(api);
   const clientOptions = useClientOptions(api);
+
+  const clientTzMap = useMemo(() => {
+    const map = {};
+    for (const opt of clientOptions) {
+      if (opt.value && opt.timezone) {
+        map[opt.value] = opt.timezone;
+      }
+    }
+    return map;
+  }, [clientOptions]);
+
+  const activeTimezone = useMemo(() => {
+    if (isAdmin && clientId) {
+      const match = clientOptions.find((c) => String(c.value) === String(clientId));
+      return match?.timezone || "America/New_York";
+    }
+    if (!isAdmin && (session?.clientId || session?.client_id)) {
+      const cId = session.clientId || session.client_id;
+      const match = clientOptions.find((c) => String(c.value) === String(cId));
+      return match?.timezone || clientTimezoneProp || "America/New_York";
+    }
+    return clientTimezoneProp || "America/New_York";
+  }, [isAdmin, clientId, clientOptions, session, clientTimezoneProp]);
 
   const filterGroups = useMemo(() => {
     const groups = [];
@@ -2670,18 +2718,22 @@ function DashboardView({ api, wsConnected, liveEvents, isAdmin, isSuperAdmin = f
   useEffect(() => { load(); }, [load]);
   useEffect(() => { if (liveEvents.length) load(); }, [liveEvents.length]); // eslint-disable-line react-hooks/exhaustive-deps
 
-
-
-  const todayStr = getTodayStr();
-  const yesterdayStr = getYesterdayStr();
+  const todayStr = useMemo(() => getTodayStr(activeTimezone), [activeTimezone]);
+  const yesterdayStr = useMemo(() => getYesterdayStr(activeTimezone), [activeTimezone]);
   const todayRunRow = useMemo(() => findTrendRow(runTrendRaw, todayStr), [runTrendRaw, todayStr]);
   const yesterdayRunRow = useMemo(() => findTrendRow(runTrendRaw, yesterdayStr), [runTrendRaw, yesterdayStr]);
   const todayHoursRow = useMemo(() => findTrendRow(hoursTrendRaw, todayStr), [hoursTrendRaw, todayStr]);
   const yesterdayHoursRow = useMemo(() => findTrendRow(hoursTrendRaw, yesterdayStr), [hoursTrendRaw, yesterdayStr]);
 
-  const todayRuns = pickField(todayRunRow, ["total_runs"], 0);
-  const todaySuccess = pickField(todayRunRow, ["successful_runs", "success_count", "successful", "success"], 0);
-  const todayFailed = pickField(todayRunRow, ["failed_runs", "failed_count", "failed"], 0);
+  const todayRuns = todayRunRow != null
+    ? pickField(todayRunRow, ["total_runs"], 0)
+    : (statusSummary?.total ?? (Number(statusSummary?.success || 0) + Number(statusSummary?.failed || 0)));
+  const todaySuccess = todayRunRow != null
+    ? pickField(todayRunRow, ["successful_runs", "success_count", "successful", "success"], 0)
+    : Number(statusSummary?.success || 0);
+  const todayFailed = todayRunRow != null
+    ? pickField(todayRunRow, ["failed_runs", "failed_count", "failed"], 0)
+    : Number(statusSummary?.failed || 0);
   const yesterdayRuns = yesterdayRunRow ? pickField(yesterdayRunRow, ["total_runs"], 0) : null;
   const runsPctChange = pctChange(todayRuns, yesterdayRuns);
 
@@ -2705,32 +2757,38 @@ function DashboardView({ api, wsConnected, liveEvents, isAdmin, isSuperAdmin = f
       hours: d.hours_saved
     })),
     [hoursTrendRaw, period]);
-  const todayLocalDate = useMemo(() => getTodayStr(), []);
-  const yesterdayLocalDate = useMemo(() => getYesterdayStr(), []);
+  const todayLocalDate = todayStr;
+  const yesterdayLocalDate = yesterdayStr;
 
   const dateCounts = useMemo(() => {
     let today = 0;
     let yesterday = 0;
     for (const r of recent || []) {
-      const d = getLocalDateStr(r.start_time);
-      if (d === todayLocalDate) today++;
-      if (d === yesterdayLocalDate) yesterday++;
+      const runTz = (r.client_id && clientTzMap[r.client_id]) || activeTimezone;
+      const d = getLocalDateStr(r.start_time, runTz);
+      const tToday = getTodayStr(runTz);
+      const tYesterday = getYesterdayStr(runTz);
+      if (d === tToday) today++;
+      if (d === tYesterday) yesterday++;
     }
     return { today, yesterday };
-  }, [recent, todayLocalDate, yesterdayLocalDate]);
+  }, [recent, clientTzMap, activeTimezone]);
 
   const runsForSelectedDate = useMemo(() => {
     return (recent || [])
       .filter((r) => {
         if (!r.start_time) return false;
-        const d = getLocalDateStr(r.start_time);
-        if (recentDateFilter === "today") return d === todayLocalDate;
-        if (recentDateFilter === "yesterday") return d === yesterdayLocalDate;
+        const runTz = (r.client_id && clientTzMap[r.client_id]) || activeTimezone;
+        const d = getLocalDateStr(r.start_time, runTz);
+        const tToday = getTodayStr(runTz);
+        const tYesterday = getYesterdayStr(runTz);
+        if (recentDateFilter === "today") return d === tToday;
+        if (recentDateFilter === "yesterday") return d === tYesterday;
         if (recentDateFilter === "custom") return customRunDate ? d === customRunDate : true;
         return isWithinLastDays(r.start_time, 5);
       })
       .sort((a, b) => new Date(b.start_time || 0) - new Date(a.start_time || 0));
-  }, [recent, recentDateFilter, customRunDate, todayLocalDate, yesterdayLocalDate]);
+  }, [recent, clientTzMap, activeTimezone, recentDateFilter, customRunDate]);
 
   const statusCountsForActiveDate = useMemo(() => {
     let all = runsForSelectedDate.length;
@@ -2898,7 +2956,7 @@ function DashboardView({ api, wsConnected, liveEvents, isAdmin, isSuperAdmin = f
       {isAdmin && <ClientActivityStrip api={api} isAdmin={isAdmin} isSuperAdmin={effectiveSuperAdmin} onStatusUpdated={load} />}
 
       <section className="hb-today-section">
-        <div className="hb-section-rule"><div className="hb-eyebrow">Today's run summary</div><span className="hb-section-date">{new Date().toLocaleDateString(undefined, { weekday: "short", month: "short", day: "numeric" })}</span></div>
+        <div className="hb-section-rule"><div className="hb-eyebrow">Today's run summary</div><span className="hb-section-date">{new Intl.DateTimeFormat("en-US", { weekday: "short", month: "short", day: "numeric", timeZone: activeTimezone }).format(new Date())}</span></div>
         <div className="hb-today-grid">
           <DashboardMetric icon={Activity} label="Total runs" value={todayRuns} tone="accent" note={runsPctChange != null ? `${runsPctChange >= 0 ? "+" : ""}${runsPctChange}% vs yesterday` : "Today's execution volume"} />
           <DashboardMetric icon={Clock} label="Running now" value={summary?.running_bots ?? "—"} tone="warning" note="Active executions" pulse={Number(summary?.running_bots || 0) > 0} />
@@ -3038,12 +3096,12 @@ function DashboardView({ api, wsConnected, liveEvents, isAdmin, isSuperAdmin = f
                   <div
                     key={r.run_id}
                     className={`hb-run-row ${effectiveSuperAdmin ? "has-admin-actions" : ""} ${i === 0 && liveEvents.length ? "fresh" : ""}`}
-                    onClick={() => setSelectedRunLog(r)}
-                    role="button"
-                    tabIndex={0}
-                    onKeyDown={(e) => { if (e.key === "Enter" || e.key === " ") setSelectedRunLog(r); }}
-                    style={{ cursor: "pointer" }}
-                    title="Click to view run details and logs"
+                    onClick={isAdmin ? () => setSelectedRunLog(r) : undefined}
+                    role={isAdmin ? "button" : undefined}
+                    tabIndex={isAdmin ? 0 : undefined}
+                    onKeyDown={isAdmin ? (e) => { if (e.key === "Enter" || e.key === " ") setSelectedRunLog(r); } : undefined}
+                    style={{ cursor: isAdmin ? "pointer" : "default" }}
+                    title={isAdmin ? "Click to view run details and logs" : undefined}
                   >
                     <div className="hb-run-bot">
                       <StatusDot status={r.status} />
@@ -3073,7 +3131,7 @@ function DashboardView({ api, wsConnected, liveEvents, isAdmin, isSuperAdmin = f
                       )}
                     </div>
                     <div className="hb-run-time">
-                      <strong>{formatRunTime(r.start_time)}</strong>
+                      <strong>{formatRunTime(r.start_time, (r.client_id && clientTzMap[r.client_id]) || activeTimezone)}</strong>
                       <small>{timeAgo(r.start_time)}</small>
                     </div>
                     {effectiveSuperAdmin && (
@@ -3098,7 +3156,7 @@ function DashboardView({ api, wsConnected, liveEvents, isAdmin, isSuperAdmin = f
         </div>
       </section>
 
-      {selectedRunLog && (
+      {selectedRunLog && isAdmin && (
         <RunLogsModal
           api={api}
           bot={{ bot_name: selectedRunLog.bot_name, bot_id: selectedRunLog.bot_id }}
@@ -3655,7 +3713,7 @@ function BotRunHistoryModal({ api, bot, isAdmin = false, isSuperAdmin = false, o
                 <th style={{ textAlign: "left", padding: "8px 10px", color: "var(--text-muted)", fontWeight: 500, fontSize: 11.5 }}>Status</th>
                 <th style={{ textAlign: "right", padding: "8px 10px", color: "var(--text-muted)", fontWeight: 500, fontSize: 11.5 }}>Duration</th>
                 <th style={{ textAlign: "right", padding: "8px 10px", color: "var(--text-muted)", fontWeight: 500, fontSize: 11.5 }}>Transactions</th>
-                <th style={{ textAlign: "right", padding: "8px 10px", color: "var(--text-muted)", fontWeight: 500, fontSize: 11.5 }}>{isSuperAdmin ? "Actions & Logs" : "Logs"}</th>
+                <th style={{ textAlign: "right", padding: "8px 10px", color: "var(--text-muted)", fontWeight: 500, fontSize: 11.5 }}>{isSuperAdmin ? "Actions & Logs" : isAdmin ? "Logs" : "Actions"}</th>
               </tr>
             </thead>
             <tbody>
@@ -3705,7 +3763,7 @@ function BotRunHistoryModal({ api, bot, isAdmin = false, isSuperAdmin = false, o
                             }}
                           />
                         )}
-                        {(r.status === "Success" || r.status === "Failed") ? (
+                        {(r.status === "Success" || r.status === "Failed") && isAdmin ? (
                           <Button
                             variant="ghost"
                             onClick={(e) => {
@@ -3736,7 +3794,7 @@ function BotRunHistoryModal({ api, bot, isAdmin = false, isSuperAdmin = false, o
         </div>
       </Modal>
 
-      {selectedRun && (
+      {selectedRun && isAdmin && (
         <RunLogsModal
           api={api}
           bot={bot}
@@ -6577,7 +6635,6 @@ const NAV_CLIENT = [
   { key: "tickets", label: "Tickets", icon: ClipboardList },
   { key: "contact", label: "Contact", icon: MessageSquare },
   { key: "reports", label: "Bot Reports", icon: FileBarChart },
-  { key: "timezone", label: "Timezone Converter", icon: Globe },
   { key: "failures", label: "Failures", icon: AlertOctagon },
   { key: "bots", label: "Bots", icon: Bot },
   { key: "account", label: "Account", icon: UserCircle2 },
@@ -6735,6 +6792,7 @@ function AppShell({ session, onLogout, onSessionExpired, onTokensRefreshed, them
   const isSuperAdmin = role === "admin";
   const isAnyAdmin = ["admin", "admin2", "admin3"].includes(role);
   const isAdmin = isAnyAdmin;
+  const isTimezoneVisible = role === "admin" || role === "admin2";
 
   const NAV_ADMIN_VIEWER = [
     { key: "dashboard", label: "Dashboard", icon: LayoutDashboard },
@@ -6749,7 +6807,14 @@ function AppShell({ session, onLogout, onSessionExpired, onTokensRefreshed, them
     { key: "bots", label: "Bots", icon: Bot },
     { key: "departments", label: "Departments", icon: Building2 },
   ];
-  const NAV = isSuperAdmin ? NAV_ADMIN : isAnyAdmin ? NAV_ADMIN_VIEWER : NAV_CLIENT;
+  const NAV = useMemo(() => {
+    const baseNav = isSuperAdmin ? NAV_ADMIN : isAnyAdmin ? NAV_ADMIN_VIEWER : NAV_CLIENT;
+    return baseNav.filter((n) => {
+      if (n.key === "timezone" && !isTimezoneVisible) return false;
+      if (n.key === "logs" && !isAdmin) return false;
+      return true;
+    });
+  }, [isSuperAdmin, isAnyAdmin, isAdmin, isTimezoneVisible]);
   const [clientTimezone, setClientTimezone] = useState(null);
   const [unreadMessages, setUnreadMessages] = useState(0);
   const [timezoneModalOpen, setTimezoneModalOpen] = useState(false);
@@ -6895,7 +6960,14 @@ function AppShell({ session, onLogout, onSessionExpired, onTokensRefreshed, them
     return () => { cancelled = true; clearInterval(timer); };
   }, [api]);
 
+  useEffect(() => {
+    if (view === "logs" && !isAdmin) setView("dashboard");
+    if (view === "timezone" && !isTimezoneVisible) setView("dashboard");
+  }, [view, isAdmin, isTimezoneVisible]);
+
   const selectView = (next) => {
+    if (next === "logs" && !isAdmin) next = "dashboard";
+    if (next === "timezone" && !isTimezoneVisible) next = "dashboard";
     setBotsClientFilter(null); // manual nav clears any client-scoped bot filter
     setView(next);
     if (next !== "logs") setLogContext(null);
@@ -6907,11 +6979,12 @@ function AppShell({ session, onLogout, onSessionExpired, onTokensRefreshed, them
   };
 
   const openLogsFromRun = useCallback((context) => {
+    if (!isAdmin) return;
     setLogContext(context || null);
     setView("logs");
     setMobileMenuOpen(false);
     window.scrollTo({ top: 0, behavior: "smooth" });
-  }, []);
+  }, [isAdmin]);
 
   const openBotsForClient = useCallback((clientId) => {
     setBotsClientFilter(clientId);
@@ -7004,7 +7077,7 @@ function AppShell({ session, onLogout, onSessionExpired, onTokensRefreshed, them
 
         <div className="hb-sidebar-footer">
           <div className="hb-sidebar-drawer-clocks">
-            {isAdmin ? <StayAheadClocks isDrawer /> : <ClientTimezoneClocks timezone={clientTimezone} isDrawer />}
+            {isTimezoneVisible ? <StayAheadClocks isDrawer /> : null}
           </div>
           <ProfileMenu email={email} role={role} onLogout={onLogout} theme={theme} toggleTheme={toggleTheme} />
         </div>
@@ -7033,13 +7106,9 @@ function AppShell({ session, onLogout, onSessionExpired, onTokensRefreshed, them
 
             </div>
           </div>
-          {isAdmin ? (
+          {isTimezoneVisible ? (
             <StayAheadClocks onOpenPlanner={() => setTimezoneModalOpen(true)} />
-          ) : (
-            <div onClick={() => setTimezoneModalOpen(true)} style={{ cursor: "pointer" }} title="Click to open Timezone Converter">
-              <ClientTimezoneClocks timezone={clientTimezone} />
-            </div>
-          )}
+          ) : null}
 
 
           <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
@@ -7118,6 +7187,7 @@ function AppShell({ session, onLogout, onSessionExpired, onTokensRefreshed, them
                 isSuperAdmin={isSuperAdmin}
                 session={session}
                 onNavigateView={selectView}
+                clientTimezoneProp={clientTimezone}
               />
             )}
 
@@ -7184,7 +7254,7 @@ function AppShell({ session, onLogout, onSessionExpired, onTokensRefreshed, them
                 session={session}
               />
             )}
-            {view === "timezone" && (
+            {view === "timezone" && isTimezoneVisible && (
               <TimezonePlanner api={api} />
             )}
             </ViewErrorBoundary>
@@ -7192,7 +7262,7 @@ function AppShell({ session, onLogout, onSessionExpired, onTokensRefreshed, them
         </main>
       </div>
 
-      {timezoneModalOpen && (
+      {timezoneModalOpen && isTimezoneVisible && (
         <Modal
           title="Timezone Mapping & Meeting Planner"
           onClose={() => setTimezoneModalOpen(false)}
