@@ -62,7 +62,9 @@ export default function AppShell({
             <div style={{ width: 220, flexShrink: 0, borderRight: "1px solid var(--border)", display: "flex", flexDirection: "column", height: "100vh", position: "sticky", top: 0 }}>
                 <div style={{ padding: "20px 20px 16px", display: "flex", alignItems: "center", gap: 8 }}>
                     <span style={{ fontFamily: "var(--font-display)", fontWeight: 700, fontSize: 16, color: "var(--accent)" }}>●</span>
-                    <span style={{ fontFamily: "var(--font-display)", fontWeight: 700, fontSize: 16 }}>HeartBeat</span>
+                    <span style={{ fontFamily: "var(--font-display)", fontWeight: 700, fontSize: 16 }}>
+                        <span className="hb-brand-heart">Heart</span><span className="hb-brand-beat">Beat</span>
+                    </span>
                 </div>
                 <nav style={{ flex: 1, padding: "8px 12px" }}>
                     {NAV.map((n) => {

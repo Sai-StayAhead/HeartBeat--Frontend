@@ -56,6 +56,8 @@ body {
     --overlay-soft: rgba(15, 23, 42, .035);
     --overlay-softer: rgba(15, 23, 42, .025);
     --scrim: rgba(255, 255, 255, .9);
+    --logo-heart-color: #000000;
+    --logo-beat-color: #f97316;
     /* --- Action Items overview card tokens (light) --- */
     --ai-card-accent-bg: #f5d7f5;
     --ai-card-accent-border: rgba(39, 54, 187, 0.18);
@@ -109,6 +111,8 @@ body {
     --overlay-soft: rgba(255, 255, 255, .045);
     --overlay-softer: rgba(255, 255, 255, .03);
     --scrim: rgba(18, 23, 29, .9);
+    --logo-heart-color: #ffffff;
+    --logo-beat-color: #f97316;
     /* --- Action Items overview card tokens (dark) --- */
     --ai-card-accent-bg: rgba(192, 38, 211, 0.12);
     --ai-card-accent-border: rgba(192, 38, 211, 0.25);
@@ -211,7 +215,7 @@ body {
     border-right: 1px solid var(--border);
     backdrop-filter: blur(18px);
     z-index: 20;
-    overflow: hidden;
+    overflow: visible;
     overscroll-behavior: none;
     transition: width .2s ease, flex-basis .2s ease, background-color .25s ease;
 }
@@ -248,6 +252,44 @@ body {
     display: block;
 }
 
+/* ---- Brand Logo Text (Theme-Aware) ---- */
+.hb-brand-logo-text {
+    font: 800 19px/1.1 'Alice', serif;
+    letter-spacing: -.1px;
+}
+
+.hb-brand-heart {
+    color: var(--logo-heart-color, #000000);
+    font-weight: 800;
+    transition: color .2s ease;
+}
+
+.hb-root[data-theme="dark"] .hb-brand-heart,
+[data-theme="dark"] .hb-brand-heart {
+    color: #ffffff !important;
+}
+
+.hb-brand-beat {
+    color: var(--logo-beat-color, #f97316);
+    font-weight: 800;
+}
+
+.hb-login-brand-name .hb-brand-heart {
+    color: var(--logo-heart-color, #000000);
+    font-weight: 800;
+    transition: color .2s ease;
+}
+
+.hb-root[data-theme="dark"] .hb-login-brand-name .hb-brand-heart,
+[data-theme="dark"] .hb-login-brand-name .hb-brand-heart {
+    color: #ffffff !important;
+}
+
+.hb-login-brand-name .hb-brand-beat {
+    color: var(--logo-beat-color, #f97316);
+    font-weight: 800;
+}
+
 .hb-sidebar-nav {
     flex: 1 1 auto;
     min-height: 0;
@@ -261,25 +303,53 @@ body {
 
 .hb-sidebar-collapse-btn {
     position: absolute;
-    top: 26px;
-    right: -12px;
-    width: 24px;
-    height: 24px;
+    top: 28px;
+    right: -13px;
+    width: 26px;
+    height: 26px;
     border-radius: 50%;
-    display: grid;
-    place-items: center;
+    display: flex;
+    align-items: center;
+    justify-content: center;
     background: var(--surface);
-    border: 1px solid var(--border);
-    color: var(--text-dim);
-    box-shadow: var(--shadow-sm);
-    z-index: 25;
-    transition: border-color .15s ease, color .15s ease, background .15s ease, transform .15s ease;
+    border: 1.5px solid var(--border-hover);
+    color: var(--text);
+    box-shadow: 0 2px 6px rgba(15, 23, 42, .14), 0 1px 2px rgba(15, 23, 42, .08);
+    cursor: pointer;
+    z-index: 35;
+    padding: 0;
+    transition: border-color .18s ease, color .18s ease, background-color .18s ease, transform .18s ease, box-shadow .18s ease;
 }
 
 .hb-sidebar-collapse-btn:hover {
     border-color: var(--accent);
     color: var(--accent);
-    transform: scale(1.08);
+    background: var(--surface-2);
+    transform: scale(1.12);
+    box-shadow: 0 4px 12px rgba(249, 115, 22, .28), 0 1px 3px rgba(0, 0, 0, .12);
+}
+
+.hb-sidebar-collapse-btn:active {
+    transform: scale(0.95);
+}
+
+.hb-sidebar-collapse-btn:focus-visible {
+    outline: 2px solid var(--accent);
+    outline-offset: 2px;
+}
+
+.hb-root[data-theme="dark"] .hb-sidebar-collapse-btn {
+    background: #171d24;
+    border-color: #3a4552;
+    color: #e2e8f0;
+    box-shadow: 0 2px 8px rgba(0, 0, 0, .5), 0 0 0 1px rgba(255, 255, 255, .04);
+}
+
+.hb-root[data-theme="dark"] .hb-sidebar-collapse-btn:hover {
+    background: #262e37;
+    border-color: var(--accent);
+    color: var(--accent);
+    box-shadow: 0 4px 14px rgba(249, 115, 22, .32);
 }
 
 .hb-nav-section {

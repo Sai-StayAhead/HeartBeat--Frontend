@@ -6,7 +6,7 @@ import {
   AlertTriangle, Loader2, KeyRound, Check, FileBarChart, UserCircle2,
   TrendingUp, Building2, AlertOctagon, Unlock, RotateCcw, ShieldAlert,
   Filter, ChevronDown, HardDrive, CalendarClock, Sun, Moon, Search,
-  ChevronsLeft, ChevronsRight, FileText, MessageSquare, Send,
+  ChevronsLeft, ChevronsRight, ChevronLeft, ChevronRight, FileText, MessageSquare, Send,
   Copy,Globe, Link2, ClipboardList, Eye, EyeOff, Lamp, Volume2, VolumeX, Reply, Mail, Tag
 } from "lucide-react";
 import {
@@ -1075,7 +1075,9 @@ function LoginScreen({ onLogin, sessionMessage, theme, toggleTheme }) {
               <Activity size={22} />
             </div>
             <div>
-              <div className="hb-login-brand-name">HeartBeat</div>
+              <div className="hb-login-brand-name">
+                <span className="hb-brand-heart">Heart</span><span className="hb-brand-beat">Beat</span>
+              </div>
               <div className="hb-login-brand-sub">RPA fleet monitoring for StayAhead Legal</div>
             </div>
           </div>
@@ -7073,13 +7075,14 @@ function AppShell({ session, onLogout, onSessionExpired, onTokensRefreshed, them
           </div>
           <div className="hb-brand-copy" style={{ minWidth: 0, flex: 1 }}>
             <div
+              className="hb-brand-logo-text"
               style={{
                 font: "800 19px/1.1 'Alice', serif",
                 letterSpacing: "-.1px",
               }}
             >
-              <span style={{ color: "#000", fontWeight: 800 }}>Heart</span>
-              <span style={{ color: "#f97316", fontWeight: 800 }}>Beat</span>
+              <span className="hb-brand-heart" style={{ color: "var(--logo-heart-color, #000000)", fontWeight: 800 }}>Heart</span>
+              <span className="hb-brand-beat" style={{ color: "#f97316", fontWeight: 800 }}>Beat</span>
             </div>
             <div style={{ marginTop: 3, color: "var(--text-dim)", fontSize: 10.5, letterSpacing: ".35px" }}>The Pulse Of Every Bot </div>
           </div>
@@ -7096,10 +7099,10 @@ function AppShell({ session, onLogout, onSessionExpired, onTokensRefreshed, them
         <button
           className="hb-sidebar-collapse-btn"
           onClick={toggleSidebar}
-          title={sidebarCollapsed ? "Expand sidebar (Ctrl+B)" : "Collapse sidebar (Ctrl+B)"}
-          aria-label="Toggle sidebar"
+          title={sidebarCollapsed ? "Expand Sidebar (Ctrl+B)" : "Collapse Sidebar (Ctrl+B)"}
+          aria-label={sidebarCollapsed ? "Expand Sidebar" : "Collapse Sidebar"}
         >
-          {sidebarCollapsed ? <ChevronsRight size={13} /> : <ChevronsLeft size={13} />}
+          {sidebarCollapsed ? <ChevronRight size={15} strokeWidth={2.4} /> : <ChevronLeft size={15} strokeWidth={2.4} />}
         </button>
 
         <nav className="hb-sidebar-nav hb-scroll">
