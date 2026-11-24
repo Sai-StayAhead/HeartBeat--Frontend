@@ -5781,7 +5781,8 @@ function CrudView({ api, canWrite, config, initialClientFilter = null, rowContex
   const save = async (formData) => {
     try {
       if (modal.mode === "create") {
-        await api(basePath, { method: "POST", body: JSON.stringify(formData) });
+        const payload = config.toCreatePayload ? config.toCreatePayload(formData) : formData;
+        await api(basePath, { method: "POST", body: JSON.stringify(payload) });
       } else {
         await api(`${basePath}${modal.data[config.idField]}`, {
           method: "PATCH", body: JSON.stringify(config.toUpdatePayload(formData)),
@@ -5886,21 +5887,52 @@ function CrudView({ api, canWrite, config, initialClientFilter = null, rowContex
         <div className="hb-scroll" style={{ overflowX: "auto" }}>
           <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 13.5 }}>
             <thead>
-              <tr style={{ borderBottom: "1px solid var(--border)" }}>
+              <tr style={{ borderBottom: "1px solid var(--border)", background: "var(--surface-2)" }}>
                 {config.columns.map((c) => (
-                  <th key={c.key} style={{ textAlign: "left", padding: "11px 16px", color: "var(--text-muted)", fontWeight: 500, fontSize: 12 }}>
+                  <th
+                    key={c.key}
+                    style={{
+                      textAlign: c.align || "left",
+                      padding: "12px 16px",
+                      color: "var(--text-muted)",
+                      fontWeight: 600,
+                      fontSize: 12,
+                      letterSpacing: "0.02em",
+                      textTransform: "uppercase",
+                      whiteSpace: "nowrap",
+                      minWidth: c.minWidth || "auto",
+                      maxWidth: c.maxWidth || "none",
+                      width: c.width || "auto",
+                    }}
+                  >
                     {c.label}
                   </th>
                 ))}
-                {canWrite && <th style={{ padding: "11px 16px" }}></th>}
+                {canWrite && (
+                  <th
+                    style={{
+                      padding: "12px 16px",
+                      width: 90,
+                      textAlign: "right",
+                      color: "var(--text-muted)",
+                      fontWeight: 600,
+                      fontSize: 12,
+                      letterSpacing: "0.02em",
+                      textTransform: "uppercase",
+                      whiteSpace: "nowrap",
+                    }}
+                  >
+                    Actions
+                  </th>
+                )}
               </tr>
             </thead>
             <tbody>
               {loading && (
-                <tr><td colSpan={config.columns.length + 1} style={{ padding: 24, textAlign: "center", color: "var(--text-dim)" }}>Loading…</td></tr>
+                <tr><td colSpan={config.columns.length + (canWrite ? 1 : 0)} style={{ padding: 28, textAlign: "center", color: "var(--text-dim)" }}>Loading…</td></tr>
               )}
               {!loading && sortedRows.length === 0 && (
-                <tr><td colSpan={config.columns.length + 1} style={{ padding: 24, textAlign: "center", color: "var(--text-dim)" }}>
+                <tr><td colSpan={config.columns.length + (canWrite ? 1 : 0)} style={{ padding: 28, textAlign: "center", color: "var(--text-dim)" }}>
                   {rows.length === 0 ? "Nothing here yet." : "No matches for your search."}
                 </td></tr>
               )}
@@ -5915,19 +5947,41 @@ function CrudView({ api, canWrite, config, initialClientFilter = null, rowContex
                   }}
                 >
                   {config.columns.map((c) => (
-                    <td key={c.key} style={{ padding: "11px 16px", verticalAlign: "middle" }}>
+                    <td
+                      key={c.key}
+                      style={{
+                        padding: "12px 16px",
+                        verticalAlign: "middle",
+                        textAlign: c.align || "left",
+                        minWidth: c.minWidth || "auto",
+                        maxWidth: c.maxWidth || "none",
+                        width: c.width || "auto",
+                      }}
+                    >
                       {c.render
                         ? c.render(row, {
                           ...(rowContext ? { ...refs, ...rowContext } : refs),
                           openVersionHistory: setVersionModalFor,
                         })
-                        : row[c.key] ?? "—"}
+                        : (
+                          <span
+                            title={row[c.key] ? String(row[c.key]) : ""}
+                            style={{
+                              display: "block",
+                              overflow: "hidden",
+                              textOverflow: "ellipsis",
+                              whiteSpace: "nowrap",
+                            }}
+                          >
+                            {row[c.key] ?? "—"}
+                          </span>
+                        )}
                     </td>
                   ))}
                   {canWrite && (
                     <td
                       onClick={(e) => e.stopPropagation()}
-                      style={{ padding: "11px 16px", textAlign: "right", whiteSpace: "nowrap" }}
+                      style={{ padding: "12px 16px", textAlign: "right", whiteSpace: "nowrap", width: 90 }}
                     >
                       {config.showCreateLogin && (
                         <button onClick={() => setLoginModalFor(row)} title="Create login" style={{ background: "none", border: "none", color: "var(--accent)", padding: 4 }}>
@@ -5935,11 +5989,11 @@ function CrudView({ api, canWrite, config, initialClientFilter = null, rowContex
                         </button>
                       )}
                       {!config.hideEdit && (
-                        <button onClick={() => openEdit(row)} style={{ background: "none", border: "none", color: "var(--text-muted)", padding: 4 }}>
+                        <button onClick={() => openEdit(row)} title="Edit" style={{ background: "none", border: "none", color: "var(--text-muted)", padding: 4 }}>
                           <Pencil size={14} />
                         </button>
                       )}
-                      <button onClick={() => setConfirmDelete(row)} style={{ background: "none", border: "none", color: "var(--danger)", padding: 4 }}>
+                      <button onClick={() => setConfirmDelete(row)} title="Delete" style={{ background: "none", border: "none", color: "var(--danger)", padding: 4 }}>
                         <Trash2 size={14} />
                       </button>
                     </td>
@@ -6114,7 +6168,7 @@ function FormModal({ title, fields, initial, refs, onCancel, onSave }) {
         {fields.map((f) => (
           <Field key={f.key} label={f.label}>
             {f.type === "select" ? (
-              <select style={inputStyle} value={form[f.key] ?? ""} onChange={(e) => set(f.key, f.numeric ? Number(e.target.value) : e.target.value)}>
+              <select style={inputStyle} value={form[f.key] ?? ""} onChange={(e) => set(f.key, f.numeric ? (e.target.value === "" ? "" : Number(e.target.value)) : e.target.value)} required={f.required}>
                 <option value="">Select…</option>
                 {(
                   f.optionsFrom
@@ -6557,17 +6611,126 @@ const botConfig = {
   searchPlaceholder: "Search bots or clients…",
   refs: [{ key: "clients", path: "/clients/" }, { key: "departments", path: "/departments/" }],
   columns: [
-    { key: "bot_name", label: "Name" },
-    { key: "email_identifier", label: "Email identifier", render: (r) => <span style={{ fontFamily: "var(--font-mono)", fontSize: 12.5 }}>{r.email_identifier}</span> },
-    { key: "client_id", label: "Client", render: (r, refs) => refs.clients?.find((c) => c.client_id === r.client_id)?.client_name || `#${r.client_id}` },
-    { key: "automation_tool", label: "Automation Tool", render: (r) => r.automation_tool ? <Badge tone="accent">{r.automation_tool}</Badge> : <span style={{ color: "var(--text-dim)" }}>—</span> },
-    { key: "owner", label: "Created By", render: (r) => r.owner || <span style={{ color: "var(--text-dim)" }}>—</span> },
-    { key: "department", label: "Department", render: (r) => r.department ? <Badge tone="accent">{r.department}</Badge> : <span style={{ color: "var(--text-dim)" }}>—</span> },
-    { key: "machine_name", label: "Machine", render: (r) => r.machine_name ? <span style={{ fontFamily: "var(--font-mono)", fontSize: 12.5, color: "var(--text-muted)" }}>{r.machine_name}</span> : <span style={{ color: "var(--text-dim)" }}>—</span> },
-    { key: "manual_process_rate", label: "Manual Process Rate", render: (r) => <span style={{ fontFamily: "var(--font-mono)", fontSize: 12.5, color: "var(--text-muted)" }}>{r.transaction_batch_size} acc = {r.transaction_batch_hours}h</span> },
+    {
+      key: "bot_name",
+      label: "Name",
+      minWidth: 160,
+      maxWidth: 240,
+      render: (r) => (
+        <span
+          title={r.bot_name}
+          style={{
+            fontWeight: 600,
+            color: "var(--text)",
+            display: "block",
+            overflow: "hidden",
+            textOverflow: "ellipsis",
+            whiteSpace: "nowrap",
+          }}
+        >
+          {r.bot_name}
+        </span>
+      ),
+    },
+    {
+      key: "email_identifier",
+      label: "Email Identifier",
+      minWidth: 160,
+      maxWidth: 220,
+      render: (r) => (
+        <span
+          title={r.email_identifier}
+          style={{
+            fontFamily: "var(--font-mono)",
+            fontSize: 12.5,
+            display: "block",
+            overflow: "hidden",
+            textOverflow: "ellipsis",
+            whiteSpace: "nowrap",
+          }}
+        >
+          {r.email_identifier}
+        </span>
+      ),
+    },
+    {
+      key: "client_id",
+      label: "Client",
+      minWidth: 130,
+      maxWidth: 190,
+      render: (r, refs) => {
+        const clientName = refs.clients?.find((c) => c.client_id === r.client_id)?.client_name || (r.client_id ? `#${r.client_id}` : "—");
+        return (
+          <span
+            title={clientName}
+            style={{
+              display: "block",
+              overflow: "hidden",
+              textOverflow: "ellipsis",
+              whiteSpace: "nowrap",
+            }}
+          >
+            {clientName}
+          </span>
+        );
+      },
+    },
+    {
+      key: "automation_tool",
+      label: "Automation Tool",
+      minWidth: 130,
+      render: (r) => r.automation_tool ? <Badge tone="accent">{r.automation_tool}</Badge> : <span style={{ color: "var(--text-dim)" }}>—</span>,
+    },
+    {
+      key: "owner",
+      label: "Bot Developed By",
+      minWidth: 140,
+      maxWidth: 180,
+      render: (r) => (
+        <span
+          title={r.owner || ""}
+          style={{
+            display: "block",
+            overflow: "hidden",
+            textOverflow: "ellipsis",
+            whiteSpace: "nowrap",
+            color: r.owner ? "var(--text)" : "var(--text-dim)",
+          }}
+        >
+          {r.owner || "—"}
+        </span>
+      ),
+    },
+    {
+      key: "department",
+      label: "Department",
+      minWidth: 110,
+      render: (r) => r.department ? <Badge tone="accent">{r.department}</Badge> : <span style={{ color: "var(--text-dim)" }}>—</span>,
+    },
+    {
+      key: "machine_name",
+      label: "Machine",
+      minWidth: 110,
+      render: (r) => r.machine_name ? (
+        <span style={{ fontFamily: "var(--font-mono)", fontSize: 12.5, color: "var(--text-muted)", whiteSpace: "nowrap" }}>
+          {r.machine_name}
+        </span>
+      ) : <span style={{ color: "var(--text-dim)" }}>—</span>,
+    },
+    {
+      key: "manual_process_rate",
+      label: "Manual Process Rate",
+      minWidth: 140,
+      render: (r) => (
+        <span style={{ fontFamily: "var(--font-mono)", fontSize: 12.5, color: "var(--text-muted)", whiteSpace: "nowrap" }}>
+          {r.transaction_batch_size ?? 10} acc = {r.transaction_batch_hours ?? 1}h
+        </span>
+      ),
+    },
     {
       key: "current_version",
       label: "Version",
+      minWidth: 90,
       render: (r, refs) => (
         <button
           type="button"
@@ -6580,7 +6743,7 @@ const botConfig = {
             padding: "5px 9px", borderRadius: 8,
             background: "var(--surface-2)", border: "1px solid var(--border)",
             color: "var(--accent)", fontFamily: "var(--font-mono)", fontSize: 12.5,
-            fontWeight: 700, cursor: "pointer",
+            fontWeight: 700, cursor: "pointer", whiteSpace: "nowrap",
           }}
           title="View version history"
         >
@@ -6589,7 +6752,12 @@ const botConfig = {
         </button>
       ),
     },
-    { key: "status", label: "Status", render: (r) => <Badge tone={r.status === "Active" ? "success" : "muted"}>{r.status}</Badge> },
+    {
+      key: "status",
+      label: "Status",
+      minWidth: 80,
+      render: (r) => <Badge tone={r.status === "Active" ? "success" : "muted"}>{r.status}</Badge>,
+    },
   ],
   renderDetailModal: (row, ctx, onClose) => {
     const clientName = ctx?.clients?.find((c) => c.client_id === row.client_id)?.client_name || (row.client_id ? `#${row.client_id}` : "—");
@@ -6597,15 +6765,15 @@ const botConfig = {
     const ageLabel = row.age_days != null ? `${row.age_days} day${row.age_days === 1 ? "" : "s"}` : "—";
     const rateLabel = `${row.transaction_batch_size ?? 10} acc = ${row.transaction_batch_hours ?? 1}h`;
     return (
-      <Modal title={row.bot_name || `Bot #${row.bot_id}`} onClose={onClose} width={540}>
-        <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 10, marginBottom: 14, flexWrap: "wrap" }}>
+      <Modal title={row.bot_name || `Bot #${row.bot_id}`} onClose={onClose} width={560}>
+        <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 10, marginBottom: 16, flexWrap: "wrap", borderBottom: "1px solid var(--border)", paddingBottom: 12 }}>
           <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
             {row.bot_code && (
               <span style={{
                 fontFamily: "var(--font-mono)",
                 fontSize: 12,
                 fontWeight: 700,
-                padding: "2px 8px",
+                padding: "3px 8px",
                 borderRadius: 6,
                 background: "var(--surface-2)",
                 border: "1px solid var(--border)",
@@ -6626,10 +6794,11 @@ const botConfig = {
             </Button>
           )}
         </div>
-        <div style={{ display: "grid", gridTemplateColumns: "repeat(2, minmax(0, 1fr))", gap: 10 }}>
-          <CrudDetailItem label="Client">{clientName}</CrudDetailItem>
+        <div style={{ display: "grid", gridTemplateColumns: "repeat(2, minmax(0, 1fr))", gap: 12 }}>
+          <CrudDetailItem label="Bot Name">{row.bot_name || "—"}</CrudDetailItem>
+          <CrudDetailItem label="Bot Owner / Client Name">{clientName}</CrudDetailItem>
+          <CrudDetailItem label="Bot Developed By">{row.owner || "—"}</CrudDetailItem>
           <CrudDetailItem label="Automation Tool">{row.automation_tool ? <Badge tone="accent">{row.automation_tool}</Badge> : "—"}</CrudDetailItem>
-          <CrudDetailItem label="Bot Created By">{row.owner || "—"}</CrudDetailItem>
           <CrudDetailItem label="Department">{row.department || "—"}</CrudDetailItem>
           <CrudDetailItem label="Machine" mono>{row.machine_name || "—"}</CrudDetailItem>
           <CrudDetailItem label="Email Identifier" mono>{row.email_identifier || "—"}</CrudDetailItem>
@@ -6640,7 +6809,7 @@ const botConfig = {
           <CrudDetailItem label="Created Date" mono>{createdDate}</CrudDetailItem>
           <CrudDetailItem label="Description" full>{row.description || "No description provided."}</CrudDetailItem>
         </div>
-        <div style={{ display: "flex", justifyContent: "flex-end", gap: 8, marginTop: 18 }}>
+        <div style={{ display: "flex", justifyContent: "flex-end", gap: 8, marginTop: 20, borderTop: "1px solid var(--border)", paddingTop: 14 }}>
           {ctx?.canWrite && ctx?.openEdit && (
             <Button variant="ghost" onClick={() => { onClose(); ctx.openEdit(row); }}>
               Edit
@@ -6654,7 +6823,7 @@ const botConfig = {
   formFields: [
     { key: "bot_name", label: "Bot name", required: true },
     { key: "email_identifier", label: "Email identifier", required: true },
-    { key: "client_id", label: "Client", type: "select", numeric: true, optionsFrom: "clients", optionValueKey: "client_id", optionLabelKey: "client_name" },
+    { key: "client_id", label: "Bot Owner / Client Name", type: "select", numeric: true, optionsFrom: "clients", optionValueKey: "client_id", optionLabelKey: "client_name", required: true },
     {
       key: "automation_tool",
       label: "Automation Tool",
@@ -6668,7 +6837,7 @@ const botConfig = {
         { value: "Other", label: "Other" },
       ],
     },
-    { key: "owner", label: "Bot Created By" },
+    { key: "owner", label: "Bot Developed By" },
     { key: "department", label: "Department", type: "select", optionsFrom: "departments", optionValueKey: "name", optionLabelKey: "name" },
     { key: "machine_name", label: "Machine name (e.g. VM-LEGAL-01)" },
     { key: "transaction_batch_size", label: "Accounts per batch (e.g. 10)", type: "number" },
@@ -6681,6 +6850,19 @@ const botConfig = {
     machine_name: "", owner: "", automation_tool: "", transaction_batch_size: 10,
     transaction_batch_hours: 1, description: "", status: "Active"
   }),
+  toCreatePayload: (f) => ({
+    bot_name: f.bot_name,
+    email_identifier: f.email_identifier,
+    client_id: Number(f.client_id),
+    department: f.department || undefined,
+    machine_name: f.machine_name || undefined,
+    owner: f.owner || undefined,
+    automation_tool: f.automation_tool || undefined,
+    transaction_batch_size: f.transaction_batch_size != null && f.transaction_batch_size !== "" ? Number(f.transaction_batch_size) : 10,
+    transaction_batch_hours: f.transaction_batch_hours != null && f.transaction_batch_hours !== "" ? Number(f.transaction_batch_hours) : 1.0,
+    description: f.description || undefined,
+    status: f.status || "Active",
+  }),
   toUpdatePayload: (f) => ({
     bot_name: f.bot_name, email_identifier: f.email_identifier,
     client_id: f.client_id ? Number(f.client_id) : undefined,
@@ -6692,7 +6874,6 @@ const botConfig = {
     status: f.status,
   }),
 };
-
 /* ------------------------------------------------------------------ */
 /* Shell (sidebar + topbar) — nav is role-aware:                       */
 /* admins manage Clients; client logins get an Account page instead.   */
