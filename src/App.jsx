@@ -6011,6 +6011,8 @@ function CrudView({ api, canWrite, config, initialClientFilter = null, rowContex
           fields={config.formFields}
           initial={modal.data}
           refs={refs}
+          mode={modal.mode}
+          isSuperAdmin={rowContext?.isSuperAdmin}
           onCancel={() => setModal(null)}
           onSave={save}
         />
@@ -6058,6 +6060,8 @@ function CrudView({ api, canWrite, config, initialClientFilter = null, rowContex
       {detailModalRow && config.renderDetailModal && config.renderDetailModal(
         detailModalRow,
         {
+          api,
+          load,
           ...(rowContext ? { ...refs, ...rowContext } : refs),
           openVersionHistory: setVersionModalFor,
           canWrite,
@@ -6158,37 +6162,56 @@ function CreateLoginModal({ api, client, onClose }) {
   );
 }
 
-function FormModal({ title, fields, initial, refs, onCancel, onSave }) {
+function FormModal({ title, fields, initial, refs, onCancel, onSave, mode = "edit", isSuperAdmin = false }) {
   const [form, setForm] = useState(initial);
   const set = (key, val) => setForm((f) => ({ ...f, [key]: val }));
 
   return (
     <Modal title={title} onClose={onCancel}>
       <form onSubmit={(e) => { e.preventDefault(); onSave(form); }}>
-        {fields.map((f) => (
-          <Field key={f.key} label={f.label}>
-            {f.type === "select" ? (
-              <select style={inputStyle} value={form[f.key] ?? ""} onChange={(e) => set(f.key, f.numeric ? (e.target.value === "" ? "" : Number(e.target.value)) : e.target.value)} required={f.required}>
-                <option value="">Select…</option>
-                {(
-                  f.optionsFrom
-                    ? (refs?.[f.optionsFrom] || [])
-                    : (f.options || [])
-                ).map((opt) => (
-                  <option key={opt.value ?? opt[f.optionValueKey]} value={opt.value ?? opt[f.optionValueKey]}>
-                    {opt.label ?? opt[f.optionLabelKey]}
-                  </option>
-                ))}
-              </select>
-            ) : f.type === "number" ? (
-              <input style={inputStyle} type="number" step="any" value={form[f.key] ?? ""}
-                onChange={(e) => set(f.key, e.target.value === "" ? null : Number(e.target.value))} />
-            ) : (
-              <input style={inputStyle} type={f.type || "text"} value={form[f.key] ?? ""}
-                onChange={(e) => set(f.key, e.target.value)} required={f.required} />
-            )}
-          </Field>
-        ))}
+        {fields.map((f) => {
+          if (f.adminOnly && mode === "create") return null;
+          return (
+            <Field key={f.key} label={f.label}>
+              {f.adminOnly && !isSuperAdmin ? (
+                <input
+                  style={{ ...inputStyle, background: "var(--surface-2)", cursor: "not-allowed", opacity: 0.7 }}
+                  value={form[f.key] ? String(form[f.key]).split("T")[0] : "—"}
+                  readOnly
+                  title="Only Admin can edit this field"
+                />
+              ) : f.type === "select" ? (
+                <select style={inputStyle} value={form[f.key] ?? ""} onChange={(e) => set(f.key, f.numeric ? (e.target.value === "" ? "" : Number(e.target.value)) : e.target.value)} required={f.required}>
+                  <option value="">Select…</option>
+                  {(
+                    f.optionsFrom
+                      ? (refs?.[f.optionsFrom] || [])
+                      : (f.options || [])
+                  ).map((opt) => (
+                    <option key={opt.value ?? opt[f.optionValueKey]} value={opt.value ?? opt[f.optionValueKey]}>
+                      {opt.label ?? opt[f.optionLabelKey]}
+                    </option>
+                  ))}
+                </select>
+              ) : f.type === "number" ? (
+                <input style={inputStyle} type="number" step="any" value={form[f.key] ?? ""}
+                  onChange={(e) => set(f.key, e.target.value === "" ? null : Number(e.target.value))} />
+              ) : f.type === "date" ? (
+                <input
+                  style={inputStyle}
+                  type="date"
+                  max={new Date().toISOString().split("T")[0]}
+                  value={form[f.key] ? String(form[f.key]).split("T")[0] : ""}
+                  onChange={(e) => set(f.key, e.target.value)}
+                  required={f.required}
+                />
+              ) : (
+                <input style={inputStyle} type={f.type || "text"} value={form[f.key] ?? ""}
+                  onChange={(e) => set(f.key, e.target.value)} required={f.required} />
+              )}
+            </Field>
+          );
+        })}
         <div style={{ display: "flex", gap: 10, justifyContent: "flex-end", marginTop: 6 }}>
           <Button variant="ghost" onClick={onCancel} type="button">Cancel</Button>
           <Button type="submit">Save</Button>
@@ -6601,13 +6624,184 @@ const departmentConfig = {
   toUpdatePayload: (f) => ({ name: f.name }),
 };
 
+function BotDetailModal({ row, ctx, onClose }) {
+  const [currentRow, setCurrentRow] = useState(row);
+  const [isEditingCreatedDate, setIsEditingCreatedDate] = useState(false);
+  const [dateInput, setDateInput] = useState(() => {
+    if (!row.created_at) return "";
+    try {
+      const d = parseServerDate(row.created_at) || new Date(row.created_at);
+      return !isNaN(d.getTime()) ? d.toISOString().split("T")[0] : "";
+    } catch {
+      return "";
+    }
+  });
+  const [dateSaving, setDateSaving] = useState(false);
+  const [dateError, setDateError] = useState("");
+
+  const clientName = ctx?.clients?.find((c) => c.client_id === currentRow.client_id)?.client_name || (currentRow.client_id ? `#${currentRow.client_id}` : "—");
+  const createdDate = currentRow.created_at ? formatDate(currentRow.created_at, DEFAULT_DISPLAY_TIMEZONE) : "—";
+  const ageLabel = currentRow.age_days != null ? `${currentRow.age_days} day${currentRow.age_days === 1 ? "" : "s"}` : "—";
+
+  const isRoleAdmin = ctx?.role === "admin" || ctx?.isSuperAdmin;
+
+  const handleSaveCreatedDate = async () => {
+    if (!dateInput) return;
+    setDateSaving(true);
+    setDateError("");
+    try {
+      const todayStr = new Date().toISOString().split("T")[0];
+      if (dateInput > todayStr) {
+        setDateError("Created date cannot be in the future.");
+        setDateSaving(false);
+        return;
+      }
+      const res = await ctx.api(`/bots/${currentRow.bot_id}`, {
+        method: "PATCH",
+        body: JSON.stringify({ created_at: dateInput }),
+      });
+      if (res?.data) {
+        setCurrentRow(res.data);
+      } else {
+        setCurrentRow((prev) => ({ ...prev, created_at: dateInput }));
+      }
+      setIsEditingCreatedDate(false);
+      ctx.load && ctx.load();
+    } catch (err) {
+      setDateError(err.message || "Failed to update created date.");
+    } finally {
+      setDateSaving(false);
+    }
+  };
+
+  return (
+    <Modal title={currentRow.bot_name || `Bot #${currentRow.bot_id}`} onClose={onClose} width={560}>
+      <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 10, marginBottom: 16, flexWrap: "wrap", borderBottom: "1px solid var(--border)", paddingBottom: 12 }}>
+        <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+          {currentRow.bot_code && (
+            <span style={{
+              fontFamily: "var(--font-mono)",
+              fontSize: 12,
+              fontWeight: 700,
+              padding: "3px 8px",
+              borderRadius: 6,
+              background: "var(--surface-2)",
+              border: "1px solid var(--border)",
+              color: "var(--accent)",
+            }}>
+              {currentRow.bot_code}
+            </span>
+          )}
+          <Badge tone={currentRow.status === "Active" ? "success" : "muted"}>{currentRow.status || "Active"}</Badge>
+        </div>
+        {ctx?.openVersionHistory && (
+          <Button
+            variant="ghost"
+            onClick={() => { onClose(); ctx.openVersionHistory(currentRow); }}
+            style={{ fontSize: 12 }}
+          >
+            Version {currentRow.current_version || "History"} →
+          </Button>
+        )}
+      </div>
+      <div style={{ display: "grid", gridTemplateColumns: "repeat(2, minmax(0, 1fr))", gap: 12 }}>
+        <CrudDetailItem label="Bot Name">{currentRow.bot_name || "—"}</CrudDetailItem>
+        <CrudDetailItem label="Bot Owner / Client Name">{clientName}</CrudDetailItem>
+        <CrudDetailItem label="Bot Developed By">{currentRow.owner || "—"}</CrudDetailItem>
+        <CrudDetailItem label="Automation Tool">{currentRow.automation_tool ? <Badge tone="accent">{currentRow.automation_tool}</Badge> : "—"}</CrudDetailItem>
+        <CrudDetailItem label="Department">{currentRow.department || "—"}</CrudDetailItem>
+        <CrudDetailItem label="Email Identifier" mono>{currentRow.email_identifier || "—"}</CrudDetailItem>
+        <CrudDetailItem label="Current Version" mono>{currentRow.current_version || "—"}</CrudDetailItem>
+        <CrudDetailItem label="Schedule Time" mono>{currentRow.schedule_time || "—"}</CrudDetailItem>
+        <CrudDetailItem label="Bot Age" mono>{ageLabel}</CrudDetailItem>
+        <CrudDetailItem label="Created Date" mono>
+          {isEditingCreatedDate ? (
+            <div style={{ display: "flex", flexDirection: "column", gap: 4 }}>
+              <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
+                <input
+                  type="date"
+                  max={new Date().toISOString().split("T")[0]}
+                  value={dateInput}
+                  onChange={(e) => setDateInput(e.target.value)}
+                  style={{
+                    ...inputStyle,
+                    padding: "3px 6px",
+                    fontSize: 12,
+                    height: 28,
+                  }}
+                />
+                <Button
+                  size="sm"
+                  onClick={handleSaveCreatedDate}
+                  disabled={dateSaving || !dateInput}
+                  style={{ padding: "3px 8px", fontSize: 12, height: 28 }}
+                >
+                  {dateSaving ? "…" : "Save"}
+                </Button>
+                <Button
+                  variant="ghost"
+                  size="sm"
+                  onClick={() => {
+                    setIsEditingCreatedDate(false);
+                    setDateError("");
+                  }}
+                  style={{ padding: "3px 8px", fontSize: 12, height: 28 }}
+                >
+                  ✕
+                </Button>
+              </div>
+              {dateError && (
+                <span style={{ color: "var(--danger)", fontSize: 11.5 }}>{dateError}</span>
+              )}
+            </div>
+          ) : (
+            <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+              <span>{createdDate}</span>
+              {isRoleAdmin && (
+                <button
+                  type="button"
+                  onClick={() => {
+                    setDateError("");
+                    setIsEditingCreatedDate(true);
+                  }}
+                  title="Edit Created Date"
+                  style={{
+                    background: "none",
+                    border: "none",
+                    cursor: "pointer",
+                    color: "var(--accent)",
+                    padding: "2px 4px",
+                    display: "inline-flex",
+                    alignItems: "center",
+                  }}
+                >
+                  <Pencil size={12} />
+                </button>
+              )}
+            </div>
+          )}
+        </CrudDetailItem>
+        <CrudDetailItem label="Description" full>{currentRow.description || "No description provided."}</CrudDetailItem>
+      </div>
+      <div style={{ display: "flex", justifyContent: "flex-end", gap: 8, marginTop: 20, borderTop: "1px solid var(--border)", paddingTop: 14 }}>
+        {ctx?.canWrite && ctx?.openEdit && (
+          <Button variant="ghost" onClick={() => { onClose(); ctx.openEdit(currentRow); }}>
+            Edit
+          </Button>
+        )}
+        <Button onClick={onClose}>Close</Button>
+      </div>
+    </Modal>
+  );
+}
+
 const botConfig = {
   label: "Bots", singular: "Bot", idField: "bot_id", listPath: "/bots/",
   supportsSoftDelete: false,
   showClientFilter: true,
   showDepartmentFilter: true,
-  showMachineFilter: true,
-  searchKeys: ["bot_name", "bot_code", "client_name", "email_identifier", "department", "machine_name", "owner", "automation_tool"],
+  showMachineFilter: false,
+  searchKeys: ["bot_name", "bot_code", "client_name", "email_identifier", "department", "owner", "automation_tool"],
   searchPlaceholder: "Search bots or clients…",
   refs: [{ key: "clients", path: "/clients/" }, { key: "departments", path: "/departments/" }],
   columns: [
@@ -6708,26 +6902,6 @@ const botConfig = {
       render: (r) => r.department ? <Badge tone="accent">{r.department}</Badge> : <span style={{ color: "var(--text-dim)" }}>—</span>,
     },
     {
-      key: "machine_name",
-      label: "Machine",
-      minWidth: 110,
-      render: (r) => r.machine_name ? (
-        <span style={{ fontFamily: "var(--font-mono)", fontSize: 12.5, color: "var(--text-muted)", whiteSpace: "nowrap" }}>
-          {r.machine_name}
-        </span>
-      ) : <span style={{ color: "var(--text-dim)" }}>—</span>,
-    },
-    {
-      key: "manual_process_rate",
-      label: "Manual Process Rate",
-      minWidth: 140,
-      render: (r) => (
-        <span style={{ fontFamily: "var(--font-mono)", fontSize: 12.5, color: "var(--text-muted)", whiteSpace: "nowrap" }}>
-          {r.transaction_batch_size ?? 10} acc = {r.transaction_batch_hours ?? 1}h
-        </span>
-      ),
-    },
-    {
       key: "current_version",
       label: "Version",
       minWidth: 90,
@@ -6759,67 +6933,7 @@ const botConfig = {
       render: (r) => <Badge tone={r.status === "Active" ? "success" : "muted"}>{r.status}</Badge>,
     },
   ],
-  renderDetailModal: (row, ctx, onClose) => {
-    const clientName = ctx?.clients?.find((c) => c.client_id === row.client_id)?.client_name || (row.client_id ? `#${row.client_id}` : "—");
-    const createdDate = row.created_at ? new Date(row.created_at).toLocaleDateString() : "—";
-    const ageLabel = row.age_days != null ? `${row.age_days} day${row.age_days === 1 ? "" : "s"}` : "—";
-    const rateLabel = `${row.transaction_batch_size ?? 10} acc = ${row.transaction_batch_hours ?? 1}h`;
-    return (
-      <Modal title={row.bot_name || `Bot #${row.bot_id}`} onClose={onClose} width={560}>
-        <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 10, marginBottom: 16, flexWrap: "wrap", borderBottom: "1px solid var(--border)", paddingBottom: 12 }}>
-          <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
-            {row.bot_code && (
-              <span style={{
-                fontFamily: "var(--font-mono)",
-                fontSize: 12,
-                fontWeight: 700,
-                padding: "3px 8px",
-                borderRadius: 6,
-                background: "var(--surface-2)",
-                border: "1px solid var(--border)",
-                color: "var(--accent)",
-              }}>
-                {row.bot_code}
-              </span>
-            )}
-            <Badge tone={row.status === "Active" ? "success" : "muted"}>{row.status || "Active"}</Badge>
-          </div>
-          {ctx?.openVersionHistory && (
-            <Button
-              variant="ghost"
-              onClick={() => { onClose(); ctx.openVersionHistory(row); }}
-              style={{ fontSize: 12 }}
-            >
-              Version {row.current_version || "History"} →
-            </Button>
-          )}
-        </div>
-        <div style={{ display: "grid", gridTemplateColumns: "repeat(2, minmax(0, 1fr))", gap: 12 }}>
-          <CrudDetailItem label="Bot Name">{row.bot_name || "—"}</CrudDetailItem>
-          <CrudDetailItem label="Bot Owner / Client Name">{clientName}</CrudDetailItem>
-          <CrudDetailItem label="Bot Developed By">{row.owner || "—"}</CrudDetailItem>
-          <CrudDetailItem label="Automation Tool">{row.automation_tool ? <Badge tone="accent">{row.automation_tool}</Badge> : "—"}</CrudDetailItem>
-          <CrudDetailItem label="Department">{row.department || "—"}</CrudDetailItem>
-          <CrudDetailItem label="Machine" mono>{row.machine_name || "—"}</CrudDetailItem>
-          <CrudDetailItem label="Email Identifier" mono>{row.email_identifier || "—"}</CrudDetailItem>
-          <CrudDetailItem label="Current Version" mono>{row.current_version || "—"}</CrudDetailItem>
-          <CrudDetailItem label="Schedule Time" mono>{row.schedule_time || "—"}</CrudDetailItem>
-          <CrudDetailItem label="Manual Process Rate" mono>{rateLabel}</CrudDetailItem>
-          <CrudDetailItem label="Bot Age" mono>{ageLabel}</CrudDetailItem>
-          <CrudDetailItem label="Created Date" mono>{createdDate}</CrudDetailItem>
-          <CrudDetailItem label="Description" full>{row.description || "No description provided."}</CrudDetailItem>
-        </div>
-        <div style={{ display: "flex", justifyContent: "flex-end", gap: 8, marginTop: 20, borderTop: "1px solid var(--border)", paddingTop: 14 }}>
-          {ctx?.canWrite && ctx?.openEdit && (
-            <Button variant="ghost" onClick={() => { onClose(); ctx.openEdit(row); }}>
-              Edit
-            </Button>
-          )}
-          <Button onClick={onClose}>Close</Button>
-        </div>
-      </Modal>
-    );
-  },
+  renderDetailModal: (row, ctx, onClose) => <BotDetailModal row={row} ctx={ctx} onClose={onClose} />,
   formFields: [
     { key: "bot_name", label: "Bot name", required: true },
     { key: "email_identifier", label: "Email identifier", required: true },
@@ -6839,7 +6953,7 @@ const botConfig = {
     },
     { key: "owner", label: "Bot Developed By" },
     { key: "department", label: "Department", type: "select", optionsFrom: "departments", optionValueKey: "name", optionLabelKey: "name" },
-    { key: "machine_name", label: "Machine name (e.g. VM-LEGAL-01)" },
+    { key: "created_at", label: "Created Date", type: "date", adminOnly: true },
     { key: "transaction_batch_size", label: "Accounts per batch (e.g. 10)", type: "number" },
     { key: "transaction_batch_hours", label: "Manual hours per batch (e.g. 1)", type: "number" },
     { key: "description", label: "Description" },
@@ -6847,7 +6961,7 @@ const botConfig = {
   ],
   emptyForm: () => ({
     bot_name: "", email_identifier: "", client_id: "", department: "",
-    machine_name: "", owner: "", automation_tool: "", transaction_batch_size: 10,
+    owner: "", automation_tool: "", transaction_batch_size: 10,
     transaction_batch_hours: 1, description: "", status: "Active"
   }),
   toCreatePayload: (f) => ({
@@ -6855,7 +6969,6 @@ const botConfig = {
     email_identifier: f.email_identifier,
     client_id: Number(f.client_id),
     department: f.department || undefined,
-    machine_name: f.machine_name || undefined,
     owner: f.owner || undefined,
     automation_tool: f.automation_tool || undefined,
     transaction_batch_size: f.transaction_batch_size != null && f.transaction_batch_size !== "" ? Number(f.transaction_batch_size) : 10,
@@ -6866,8 +6979,9 @@ const botConfig = {
   toUpdatePayload: (f) => ({
     bot_name: f.bot_name, email_identifier: f.email_identifier,
     client_id: f.client_id ? Number(f.client_id) : undefined,
-    department: f.department, machine_name: f.machine_name,
+    department: f.department,
     owner: f.owner, automation_tool: f.automation_tool,
+    created_at: f.created_at || undefined,
     transaction_batch_size: f.transaction_batch_size != null && f.transaction_batch_size !== "" ? Number(f.transaction_batch_size) : undefined,
     transaction_batch_hours: f.transaction_batch_hours != null && f.transaction_batch_hours !== "" ? Number(f.transaction_batch_hours) : undefined,
     description: f.description,
@@ -7483,6 +7597,7 @@ function AppShell({ session, onLogout, onSessionExpired, onTokensRefreshed, them
                 canWrite={isSuperAdmin || role === "admin2"}
                 config={botConfig}
                 initialClientFilter={botsClientFilter}
+                rowContext={{ role, isSuperAdmin, isAdmin }}
               />
             )}
             {view === "departments" && isAdmin && (

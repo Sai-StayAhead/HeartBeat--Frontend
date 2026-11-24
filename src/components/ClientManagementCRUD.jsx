@@ -303,22 +303,35 @@ function Empty({ tab, icon: IconOverride, title, message, onAdd, addLabel }) {
 
 function SecretCell({ credentialId, onFetchSecret, onCopy, copyKey, copiedKey }) {
   const [state, setState] = useState({ value: null, visible: false, loading: false, error: false });
+
+  useEffect(() => {
+    if (!state.visible) return;
+    const timer = setTimeout(() => {
+      setState({ value: null, visible: false, loading: false, error: false });
+    }, 60000);
+    return () => clearTimeout(timer);
+  }, [state.visible]);
+
   if (!credentialId) return <span className="cmx-mono">—</span>;
 
   const toggleReveal = async () => {
-    if (state.visible) { setState((s) => ({ ...s, visible: false })); return; }
-    if (state.value !== null) { setState((s) => ({ ...s, visible: true })); return; }
+    if (state.visible) {
+      setState({ value: null, visible: false, loading: false, error: false });
+      return;
+    }
     setState((s) => ({ ...s, loading: true, error: false }));
     try {
       const secret = await onFetchSecret(credentialId);
       setState({ value: secret || "", visible: true, loading: false, error: false });
-    } catch (e) { setState({ value: null, visible: false, loading: false, error: true }); }
+    } catch (e) {
+      setState({ value: null, visible: false, loading: false, error: true });
+    }
   };
   const copySecret = async () => {
     if (state.value !== null) { onCopy(state.value, copyKey); return; }
     try {
       const secret = await onFetchSecret(credentialId);
-      setState((s) => ({ ...s, value: secret || "" }));
+      setState({ value: secret || "", visible: true, loading: false, error: false });
       onCopy(secret || "", copyKey);
     } catch (e) { /* handled */ }
   };
@@ -336,15 +349,19 @@ function SecretCell({ credentialId, onFetchSecret, onCopy, copyKey, copiedKey })
 function AccessSecretCell({ accessId, onFetchPassword, onCopy, copyKey, copiedKey }) {
   const [state, setState] = useState({ value: null, visible: false, loading: false, error: false });
 
+  useEffect(() => {
+    if (!state.visible) return;
+    const timer = setTimeout(() => {
+      setState({ value: null, visible: false, loading: false, error: false });
+    }, 60000);
+    return () => clearTimeout(timer);
+  }, [state.visible]);
+
   if (!accessId) return <span className="cmx-mono">—</span>;
 
   const reveal = async () => {
     if (state.visible) {
-      setState((current) => ({ ...current, visible: false }));
-      return;
-    }
-    if (state.value !== null) {
-      setState((current) => ({ ...current, visible: true }));
+      setState({ value: null, visible: false, loading: false, error: false });
       return;
     }
     setState((current) => ({ ...current, loading: true, error: false }));
@@ -388,15 +405,19 @@ function AccessSecretCell({ accessId, onFetchPassword, onCopy, copyKey, copiedKe
 function MachineSecretCell({ machineId, onFetchPassword, onCopy, copyKey, copiedKey }) {
   const [state, setState] = useState({ value: null, visible: false, loading: false, error: false });
 
+  useEffect(() => {
+    if (!state.visible) return;
+    const timer = setTimeout(() => {
+      setState({ value: null, visible: false, loading: false, error: false });
+    }, 60000);
+    return () => clearTimeout(timer);
+  }, [state.visible]);
+
   if (!machineId) return <span className="cmx-mono">—</span>;
 
   const reveal = async () => {
     if (state.visible) {
-      setState((current) => ({ ...current, visible: false }));
-      return;
-    }
-    if (state.value !== null) {
-      setState((current) => ({ ...current, visible: true }));
+      setState({ value: null, visible: false, loading: false, error: false });
       return;
     }
     setState((current) => ({ ...current, loading: true, error: false }));
@@ -675,6 +696,14 @@ function ConfirmDeleteDialog({ record, tab, deleting, onClose, onConfirm }) {
 }
 
 function SecretDialog({ reveal, onClose }) {
+  useEffect(() => {
+    if (!reveal) return;
+    const timer = setTimeout(() => {
+      onClose();
+    }, 60000);
+    return () => clearTimeout(timer);
+  }, [reveal, onClose]);
+
   return (
     <div className="cmx-dialog-scrim" onMouseDown={onClose}>
       <div className="cmx-dialog" onMouseDown={(e) => e.stopPropagation()}>
@@ -1391,12 +1420,11 @@ const unlock = async (e) => {
         const value = await cmRequest(`/credentials/${credentialId}/reveal`, { method: "POST" });
         return value?.secret ?? value?.value ?? "";
       }
-      const res = await api(`${BASE}/credentials/${credentialId}/reveal`, { method: "POST" });
-      return res?.secret ?? res?.value ?? "";
+      return "";
     } catch (_) {
       return "";
     }
-  }, [cmToken, cmRequest, api]);
+  }, [cmToken, cmRequest]);
 
   const fetchAccessPassword = useCallback(async (accessId) => {
     try {
@@ -1404,12 +1432,11 @@ const unlock = async (e) => {
         const res = await cmRequest(`/access/${accessId}/reveal-password`, { method: "GET" });
         return res?.password ?? res?.value ?? "";
       }
-      const res2 = await api(`${BASE}/access/${accessId}/reveal-password`, { method: "GET" });
-      return res2?.password ?? res2?.value ?? "";
+      return "";
     } catch (_) {
       return "";
     }
-  }, [cmToken, cmRequest, api]);
+  }, [cmToken, cmRequest]);
 
   const fetchMachinePassword = useCallback(async (machineId) => {
     try {
@@ -1417,12 +1444,11 @@ const unlock = async (e) => {
         const res = await cmRequest(`/machines/${machineId}/reveal-password`, { method: "GET" });
         return res?.password ?? res?.value ?? "";
       }
-      const res2 = await api(`${BASE}/machines/${machineId}/reveal-password`, { method: "GET" });
-      return res2?.password ?? res2?.value ?? "";
+      return "";
     } catch (_) {
       return "";
     }
-  }, [cmToken, cmRequest, api]);
+  }, [cmToken, cmRequest]);
 
   const copyValue = async (value, key) => {
     try {
