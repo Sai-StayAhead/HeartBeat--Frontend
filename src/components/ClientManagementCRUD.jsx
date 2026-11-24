@@ -233,7 +233,7 @@ const columnsFor = (tab, helpers) => {
       { label: "Auth Type", render: r => r.authentication_type || "—" },
       { label: "Auth To", render: r => r.authentication_to || "—" },
       { label: "Username", render: r => copyCell(r.username, `access-${r.access_id}-username`) },
-      { label: "Password", render: r => <AccessSecretCell accessId={r.access_id} onFetchPassword={helpers.onFetchAccessPassword} onCopy={helpers.onCopy} copyKey={`access-${r.access_id}-password`} copiedKey={helpers.copiedKey} /> },
+      { label: "Password", render: r => r.has_password === false ? <span className="cmx-mx-muted">—</span> : <AccessSecretCell accessId={r.access_id} onFetchPassword={helpers.onFetchAccessPassword} onCopy={helpers.onCopy} copyKey={`access-${r.access_id}-password`} copiedKey={helpers.copiedKey} /> },
       { label: "Status", render: r => statusCell(r.status) },
     ];
     case "credentials": return [
@@ -241,14 +241,14 @@ const columnsFor = (tab, helpers) => {
       { label: "Category", render: r => r.credential_category || "—" },
       { label: "Type", render: r => r.credential_type || "—" },
       { label: "Username / Email", render: r => copyCell(r.username, `credential-${r.credential_id}-username`) },
-      { label: "Password", render: r => (r.credential_id ? <SecretCell credentialId={r.credential_id} onFetchSecret={helpers.onFetchSecret} onCopy={helpers.onCopy} copyKey={`credential-${r.credential_id}-secret`} copiedKey={helpers.copiedKey} /> : "—") },
+      { label: "Password", render: r => r.has_secret === false ? <span className="cmx-mx-muted">—</span> : (r.credential_id ? <SecretCell credentialId={r.credential_id} onFetchSecret={helpers.onFetchSecret} onCopy={helpers.onCopy} copyKey={`credential-${r.credential_id}-secret`} copiedKey={helpers.copiedKey} /> : "—") },
       { label: "URL / Location", render: r => linkCell(r.url) },
     ];
     case "machines": return [
       { label: "Machine", primary: true, render: r => r.machine_name || "—" },
       { label: "Project", render: r => projectName(r.project_id) },
       { label: "Username", render: r => copyCell(r.username, `machine-${r.machine_id}-username`) },
-      { label: "Password", render: r => <MachineSecretCell machineId={r.machine_id} onFetchPassword={helpers.onFetchMachinePassword} onCopy={helpers.onCopy} copyKey={`machine-${r.machine_id}-password`} copiedKey={helpers.copiedKey} /> },
+      { label: "Password", render: r => r.has_password === false ? <span className="cmx-mx-muted">—</span> : <MachineSecretCell machineId={r.machine_id} onFetchPassword={helpers.onFetchMachinePassword} onCopy={helpers.onCopy} copyKey={`machine-${r.machine_id}-password`} copiedKey={helpers.copiedKey} /> },
       { label: "Environment", render: r => r.environment || "—" },
       { label: "Resolution", render: r => r.screen_resolution || "—" },
       { label: "Status", render: r => statusCell(r.status) },
@@ -352,7 +352,7 @@ function AccessSecretCell({ accessId, onFetchPassword, onCopy, copyKey, copiedKe
       const password = await onFetchPassword(accessId);
       setState({ value: password || "", visible: true, loading: false, error: false });
     } catch (_) {
-      setState({ value: null, visible: false, loading: false, error: true });
+      setState({ value: "", visible: true, loading: false, error: false });
     }
   };
 
@@ -404,7 +404,7 @@ function MachineSecretCell({ machineId, onFetchPassword, onCopy, copyKey, copied
       const password = await onFetchPassword(machineId);
       setState({ value: password || "", visible: true, loading: false, error: false });
     } catch (_) {
-      setState({ value: null, visible: false, loading: false, error: true });
+      setState({ value: "", visible: true, loading: false, error: false });
     }
   };
 
@@ -903,11 +903,11 @@ function ExcelMatrixViewModal({ title, rows, onClose, onCopy, copiedKey, onFetch
 
                       <td>
                         {accId ? (
-                          <AccessSecretCell accessId={accId} onFetchPassword={onFetchAccessPassword} onCopy={onCopy} copyKey={`${r.key}-password`} copiedKey={copiedKey} />
+                          r.row?.has_password === false ? <span className="cmx-mx-muted">—</span> : <AccessSecretCell accessId={accId} onFetchPassword={onFetchAccessPassword} onCopy={onCopy} copyKey={`${r.key}-password`} copiedKey={copiedKey} />
                         ) : machId ? (
-                          <MachineSecretCell machineId={machId} onFetchPassword={onFetchMachinePassword} onCopy={onCopy} copyKey={`${r.key}-password`} copiedKey={copiedKey} />
+                          r.row?.has_password === false ? <span className="cmx-mx-muted">—</span> : <MachineSecretCell machineId={machId} onFetchPassword={onFetchMachinePassword} onCopy={onCopy} copyKey={`${r.key}-password`} copiedKey={copiedKey} />
                         ) : credId ? (
-                          <SecretCell credentialId={credId} onFetchSecret={onFetchSecret} onCopy={onCopy} copyKey={`${r.key}-secret`} copiedKey={copiedKey} />
+                          r.row?.has_secret === false ? <span className="cmx-mx-muted">—</span> : <SecretCell credentialId={credId} onFetchSecret={onFetchSecret} onCopy={onCopy} copyKey={`${r.key}-secret`} copiedKey={copiedKey} />
                         ) : (
                           <span className="cmx-mx-muted">—</span>
                         )}
@@ -1045,10 +1045,10 @@ function ProjectConsole({ project, projects, tabRows, tabLoading, onBack, onAdd,
       ) },
     { label: "Username / Email", render: (r) => copyCellStatic(r.username, `${r.key}-username`, onCopy, copiedKey) },
     { label: "Password", render: (r) => r.accessId
-        ? <AccessSecretCell accessId={r.accessId} onFetchPassword={onFetchAccessPassword} onCopy={onCopy} copyKey={`${r.key}-password`} copiedKey={copiedKey} />
+        ? (r.row?.has_password === false ? <span className="cmx-mx-muted">—</span> : <AccessSecretCell accessId={r.accessId} onFetchPassword={onFetchAccessPassword} onCopy={onCopy} copyKey={`${r.key}-password`} copiedKey={copiedKey} />)
         : r.machineId
-          ? <MachineSecretCell machineId={r.machineId} onFetchPassword={onFetchMachinePassword} onCopy={onCopy} copyKey={`${r.key}-password`} copiedKey={copiedKey} />
-          : <SecretCell credentialId={r.credentialId} onFetchSecret={onFetchSecret} onCopy={onCopy} copyKey={`${r.key}-secret`} copiedKey={copiedKey} /> },
+          ? (r.row?.has_password === false ? <span className="cmx-mx-muted">—</span> : <MachineSecretCell machineId={r.machineId} onFetchPassword={onFetchMachinePassword} onCopy={onCopy} copyKey={`${r.key}-password`} copiedKey={copiedKey} />)
+          : (r.row?.has_secret === false ? <span className="cmx-mx-muted">—</span> : <SecretCell credentialId={r.credentialId} onFetchSecret={onFetchSecret} onCopy={onCopy} copyKey={`${r.key}-secret`} copiedKey={copiedKey} />) },
     { label: "URL / Location", render: (r) => isUrl(r.url) ? <a className="cmx-link" href={r.url} target="_blank" rel="noreferrer">{r.url}</a> : (r.url || "—") },
     { label: "Status", render: (r) => r.status ? <StatusDot value={r.status} /> : "—" },
   ];
@@ -1386,34 +1386,43 @@ const unlock = async (e) => {
   };
 
   const fetchSecretValue = useCallback(async (credentialId) => {
-      try {
+    try {
+      if (cmToken) {
         const value = await cmRequest(`/credentials/${credentialId}/reveal`, { method: "POST" });
         return value?.secret ?? value?.value ?? "";
-      } catch (_) {
-        const res = await api(`${BASE}/credentials/${credentialId}/reveal`, { method: "POST" }); // ✅ added ${BASE}
-        return res?.secret ?? res?.value ?? "";
       }
-    }, [cmRequest, api]);
+      const res = await api(`${BASE}/credentials/${credentialId}/reveal`, { method: "POST" });
+      return res?.secret ?? res?.value ?? "";
+    } catch (_) {
+      return "";
+    }
+  }, [cmToken, cmRequest, api]);
 
   const fetchAccessPassword = useCallback(async (accessId) => {
     try {
-      const res = await cmRequest(`/access/${accessId}/reveal-password`, { method: "GET" });
-      return res?.password ?? res?.value ?? "";
-    } catch (_) {
+      if (cmToken) {
+        const res = await cmRequest(`/access/${accessId}/reveal-password`, { method: "GET" });
+        return res?.password ?? res?.value ?? "";
+      }
       const res2 = await api(`${BASE}/access/${accessId}/reveal-password`, { method: "GET" });
       return res2?.password ?? res2?.value ?? "";
+    } catch (_) {
+      return "";
     }
-  }, [cmRequest, api]);
+  }, [cmToken, cmRequest, api]);
 
   const fetchMachinePassword = useCallback(async (machineId) => {
     try {
-      const res = await cmRequest(`/machines/${machineId}/reveal-password`, { method: "GET" });
-      return res?.password ?? res?.value ?? "";
-    } catch (_) {
+      if (cmToken) {
+        const res = await cmRequest(`/machines/${machineId}/reveal-password`, { method: "GET" });
+        return res?.password ?? res?.value ?? "";
+      }
       const res2 = await api(`${BASE}/machines/${machineId}/reveal-password`, { method: "GET" });
       return res2?.password ?? res2?.value ?? "";
+    } catch (_) {
+      return "";
     }
-  }, [cmRequest, api]);
+  }, [cmToken, cmRequest, api]);
 
   const copyValue = async (value, key) => {
     try {

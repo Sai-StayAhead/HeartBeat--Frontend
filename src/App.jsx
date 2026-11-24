@@ -6553,13 +6553,15 @@ const botConfig = {
   showClientFilter: true,
   showDepartmentFilter: true,
   showMachineFilter: true,
-  searchKeys: ["bot_name", "bot_code", "client_name", "email_identifier", "department", "machine_name", "owner"],
+  searchKeys: ["bot_name", "bot_code", "client_name", "email_identifier", "department", "machine_name", "owner", "automation_tool"],
   searchPlaceholder: "Search bots or clients…",
   refs: [{ key: "clients", path: "/clients/" }, { key: "departments", path: "/departments/" }],
   columns: [
     { key: "bot_name", label: "Name" },
     { key: "email_identifier", label: "Email identifier", render: (r) => <span style={{ fontFamily: "var(--font-mono)", fontSize: 12.5 }}>{r.email_identifier}</span> },
     { key: "client_id", label: "Client", render: (r, refs) => refs.clients?.find((c) => c.client_id === r.client_id)?.client_name || `#${r.client_id}` },
+    { key: "automation_tool", label: "Automation Tool", render: (r) => r.automation_tool ? <Badge tone="accent">{r.automation_tool}</Badge> : <span style={{ color: "var(--text-dim)" }}>—</span> },
+    { key: "owner", label: "Created By", render: (r) => r.owner || <span style={{ color: "var(--text-dim)" }}>—</span> },
     { key: "department", label: "Department", render: (r) => r.department ? <Badge tone="accent">{r.department}</Badge> : <span style={{ color: "var(--text-dim)" }}>—</span> },
     { key: "machine_name", label: "Machine", render: (r) => r.machine_name ? <span style={{ fontFamily: "var(--font-mono)", fontSize: 12.5, color: "var(--text-muted)" }}>{r.machine_name}</span> : <span style={{ color: "var(--text-dim)" }}>—</span> },
     { key: "manual_process_rate", label: "Manual Process Rate", render: (r) => <span style={{ fontFamily: "var(--font-mono)", fontSize: 12.5, color: "var(--text-muted)" }}>{r.transaction_batch_size} acc = {r.transaction_batch_hours}h</span> },
@@ -6626,10 +6628,11 @@ const botConfig = {
         </div>
         <div style={{ display: "grid", gridTemplateColumns: "repeat(2, minmax(0, 1fr))", gap: 10 }}>
           <CrudDetailItem label="Client">{clientName}</CrudDetailItem>
+          <CrudDetailItem label="Automation Tool">{row.automation_tool ? <Badge tone="accent">{row.automation_tool}</Badge> : "—"}</CrudDetailItem>
+          <CrudDetailItem label="Bot Created By">{row.owner || "—"}</CrudDetailItem>
           <CrudDetailItem label="Department">{row.department || "—"}</CrudDetailItem>
           <CrudDetailItem label="Machine" mono>{row.machine_name || "—"}</CrudDetailItem>
           <CrudDetailItem label="Email Identifier" mono>{row.email_identifier || "—"}</CrudDetailItem>
-          <CrudDetailItem label="Owner">{row.owner || "—"}</CrudDetailItem>
           <CrudDetailItem label="Current Version" mono>{row.current_version || "—"}</CrudDetailItem>
           <CrudDetailItem label="Schedule Time" mono>{row.schedule_time || "—"}</CrudDetailItem>
           <CrudDetailItem label="Manual Process Rate" mono>{rateLabel}</CrudDetailItem>
@@ -6652,18 +6655,40 @@ const botConfig = {
     { key: "bot_name", label: "Bot name", required: true },
     { key: "email_identifier", label: "Email identifier", required: true },
     { key: "client_id", label: "Client", type: "select", numeric: true, optionsFrom: "clients", optionValueKey: "client_id", optionLabelKey: "client_name" },
+    {
+      key: "automation_tool",
+      label: "Automation Tool",
+      type: "select",
+      options: [
+        { value: "Python", label: "Python" },
+        { value: "UiPath", label: "UiPath" },
+        { value: "Power Automate", label: "Power Automate" },
+        { value: "Selenium", label: "Selenium" },
+        { value: "Playwright", label: "Playwright" },
+        { value: "Other", label: "Other" },
+      ],
+    },
+    { key: "owner", label: "Bot Created By" },
     { key: "department", label: "Department", type: "select", optionsFrom: "departments", optionValueKey: "name", optionLabelKey: "name" },
     { key: "machine_name", label: "Machine name (e.g. VM-LEGAL-01)" },
-    { key: "owner", label: "Owner" },
     { key: "transaction_batch_size", label: "Accounts per batch (e.g. 10)", type: "number" },
     { key: "transaction_batch_hours", label: "Manual hours per batch (e.g. 1)", type: "number" },
+    { key: "description", label: "Description" },
     { key: "status", label: "Status", type: "select", options: [{ value: "Active", label: "Active" }, { value: "Inactive", label: "Inactive" }] },
   ],
-  emptyForm: () => ({ bot_name: "", email_identifier: "", client_id: "", department: "", machine_name: "", owner: "", transaction_batch_size: 10, transaction_batch_hours: 1, status: "Active" }),
+  emptyForm: () => ({
+    bot_name: "", email_identifier: "", client_id: "", department: "",
+    machine_name: "", owner: "", automation_tool: "", transaction_batch_size: 10,
+    transaction_batch_hours: 1, description: "", status: "Active"
+  }),
   toUpdatePayload: (f) => ({
     bot_name: f.bot_name, email_identifier: f.email_identifier,
-    client_id: f.client_id, department: f.department, machine_name: f.machine_name, owner: f.owner,
-    transaction_batch_size: f.transaction_batch_size, transaction_batch_hours: f.transaction_batch_hours,
+    client_id: f.client_id ? Number(f.client_id) : undefined,
+    department: f.department, machine_name: f.machine_name,
+    owner: f.owner, automation_tool: f.automation_tool,
+    transaction_batch_size: f.transaction_batch_size != null && f.transaction_batch_size !== "" ? Number(f.transaction_batch_size) : undefined,
+    transaction_batch_hours: f.transaction_batch_hours != null && f.transaction_batch_hours !== "" ? Number(f.transaction_batch_hours) : undefined,
+    description: f.description,
     status: f.status,
   }),
 };
@@ -7274,7 +7299,7 @@ function AppShell({ session, onLogout, onSessionExpired, onTokensRefreshed, them
             {view === "bots" && (
               <CrudView
                 api={api}
-                canWrite={isSuperAdmin}
+                canWrite={isSuperAdmin || role === "admin2"}
                 config={botConfig}
                 initialClientFilter={botsClientFilter}
               />
