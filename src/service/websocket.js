@@ -11,6 +11,7 @@ export function useHeartbeatSocket(baseUrl, token) {
   const [events, setEvents] = useState([]);
   const wsRef = useRef(null);
   const attemptRef = useRef(0);
+  const seqRef = useRef(0);
   const closedByUsRef = useRef(false);
 
   useEffect(() => {
@@ -18,9 +19,30 @@ export function useHeartbeatSocket(baseUrl, token) {
     closedByUsRef.current = false;
 
     let reconnectTimer;
+    let attemptTimer;
 
-    const connect = () => {
-      const wsUrl = baseUrl.replace(/^http/, "ws") + `/ws?token=${encodeURIComponent(token)}`;
+    const connect = async () => {
+      if (closedByUsRef.current) return;
+      let wsUrl;
+      try {
+        const res = await fetch(`${baseUrl}/auth/ws-ticket`, {
+          method: "POST",
+          headers: { Authorization: `Bearer ${token}` },
+        });
+        if (!res.ok) throw new Error(`ws-ticket failed (${res.status})`);
+        const data = await res.json();
+        if (!data?.ticket) throw new Error("missing ws ticket");
+        wsUrl = baseUrl.replace(/^http/, "ws") + `/ws?ticket=${encodeURIComponent(data.ticket)}`;
+      } catch (_) {
+        if (closedByUsRef.current) return;
+        setStatus("reconnecting");
+        const delay = Math.min(1000 * 2 ** attemptRef.current, 15000);
+        attemptRef.current += 1;
+        attemptTimer = setTimeout(connect, delay);
+        return;
+      }
+      if (closedByUsRef.current) return;
+
       let ws;
       try {
         ws = new WebSocket(wsUrl);
@@ -38,7 +60,8 @@ export function useHeartbeatSocket(baseUrl, token) {
         try {
           const data = JSON.parse(e.data);
           if (data.event) {
-            setEvents((prev) => [{ ...data, _receivedAt: Date.now() }, ...prev].slice(0, 50));
+            const nextSeq = ++seqRef.current;
+            setEvents((prev) => [{ ...data, _receivedAt: Date.now(), _eventSeq: nextSeq }, ...prev].slice(0, 50));
           }
         } catch (_) { /* ignore non-JSON pings */ }
       };
@@ -57,6 +80,7 @@ export function useHeartbeatSocket(baseUrl, token) {
     return () => {
       closedByUsRef.current = true;
       clearTimeout(reconnectTimer);
+      clearTimeout(attemptTimer);
       wsRef.current?.close();
     };
   }, [baseUrl, token]);

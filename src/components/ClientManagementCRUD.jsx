@@ -187,6 +187,20 @@ function statusTone(value) {
   return "muted";
 }
 
+const CONTROL_OR_SPACE_RE = /[\u0000-\u0020\u007f]/;
+
+function isSafeHttpUrl(value) {
+  if (typeof value !== "string") return false;
+  const trimmed = value.trim();
+  if (!trimmed || CONTROL_OR_SPACE_RE.test(trimmed)) return false;
+  try {
+    const parsed = new URL(trimmed);
+    return parsed.protocol === "http:" || parsed.protocol === "https:";
+  } catch (_) {
+    return false;
+  }
+}
+
 /* ================================================================
    COLUMNS FOR LEDGER
    ================================================================ */
@@ -211,9 +225,19 @@ const columnsFor = (tab, helpers) => {
   };
 
   const projectName = helpers?.projectName || (() => "—");
-  const linkCell = (url) => url
-    ? <a className="cmx-link" href={url} target="_blank" rel="noreferrer">{url.length > 34 ? "Open link" : url} <ExternalLink size={11} /></a>
-    : "—";
+  const canReveal = Boolean(helpers?.canReveal);
+  const linkCell = (url) => {
+    if (!url) return "—";
+    if (isSafeHttpUrl(url)) {
+      const safe = url.trim();
+      return (
+        <a className="cmx-link" href={safe} target="_blank" rel="noopener noreferrer">
+          {safe.length > 34 ? "Open link" : safe} <ExternalLink size={11} />
+        </a>
+      );
+    }
+    return <span>{url}</span>;
+  };
   const statusCell = (v) => v ? <StatusDot value={v} /> : "—";
 
   switch (tab) {
@@ -233,7 +257,7 @@ const columnsFor = (tab, helpers) => {
       { label: "Auth Type", render: r => r.authentication_type || "—" },
       { label: "Auth To", render: r => r.authentication_to || "—" },
       { label: "Username", render: r => copyCell(r.username, `access-${r.access_id}-username`) },
-      { label: "Password", render: r => r.has_password === false ? <span className="cmx-mx-muted">—</span> : <AccessSecretCell accessId={r.access_id} onFetchPassword={helpers.onFetchAccessPassword} onCopy={helpers.onCopy} copyKey={`access-${r.access_id}-password`} copiedKey={helpers.copiedKey} /> },
+      { label: "Password", render: r => !canReveal ? <span className="cmx-mx-muted">••••••</span> : (r.has_password === false ? <span className="cmx-mx-muted">—</span> : <AccessSecretCell accessId={r.access_id} onFetchPassword={helpers.onFetchAccessPassword} onCopy={helpers.onCopy} copyKey={`access-${r.access_id}-password`} copiedKey={helpers.copiedKey} />) },
       { label: "Status", render: r => statusCell(r.status) },
     ];
     case "credentials": return [
@@ -241,14 +265,14 @@ const columnsFor = (tab, helpers) => {
       { label: "Category", render: r => r.credential_category || "—" },
       { label: "Type", render: r => r.credential_type || "—" },
       { label: "Username / Email", render: r => copyCell(r.username, `credential-${r.credential_id}-username`) },
-      { label: "Password", render: r => r.has_secret === false ? <span className="cmx-mx-muted">—</span> : (r.credential_id ? <SecretCell credentialId={r.credential_id} onFetchSecret={helpers.onFetchSecret} onCopy={helpers.onCopy} copyKey={`credential-${r.credential_id}-secret`} copiedKey={helpers.copiedKey} /> : "—") },
+      { label: "Password", render: r => !canReveal ? <span className="cmx-mx-muted">••••••</span> : (r.has_secret === false ? <span className="cmx-mx-muted">—</span> : (r.credential_id ? <SecretCell credentialId={r.credential_id} onFetchSecret={helpers.onFetchSecret} onCopy={helpers.onCopy} copyKey={`credential-${r.credential_id}-secret`} copiedKey={helpers.copiedKey} /> : "—")) },
       { label: "URL / Location", render: r => linkCell(r.url) },
     ];
     case "machines": return [
       { label: "Machine", primary: true, render: r => r.machine_name || "—" },
       { label: "Project", render: r => projectName(r.project_id) },
       { label: "Username", render: r => copyCell(r.username, `machine-${r.machine_id}-username`) },
-      { label: "Password", render: r => r.has_password === false ? <span className="cmx-mx-muted">—</span> : <MachineSecretCell machineId={r.machine_id} onFetchPassword={helpers.onFetchMachinePassword} onCopy={helpers.onCopy} copyKey={`machine-${r.machine_id}-password`} copiedKey={helpers.copiedKey} /> },
+      { label: "Password", render: r => !canReveal ? <span className="cmx-mx-muted">••••••</span> : (r.has_password === false ? <span className="cmx-mx-muted">—</span> : <MachineSecretCell machineId={r.machine_id} onFetchPassword={helpers.onFetchMachinePassword} onCopy={helpers.onCopy} copyKey={`machine-${r.machine_id}-password`} copiedKey={helpers.copiedKey} />) },
       { label: "Environment", render: r => r.environment || "—" },
       { label: "Resolution", render: r => r.screen_resolution || "—" },
       { label: "Status", render: r => statusCell(r.status) },
@@ -600,7 +624,11 @@ function ClientDrawer({ mode, initial, saving, onClose, onSave }) {
 function RecordDrawer({ tab, mode, initial, projects, saving, onClose, onSave }) {
   const config = FORM_CONFIG[tab];
   const [form, setForm] = useState(() => ({ status: "Active", is_primary: false, ...(initial || {}) }));
-  const update = (key, value) => setForm((p) => ({ ...p, [key]: value }));
+  const [urlError, setUrlError] = useState("");
+  const update = (key, value) => {
+    if (key === "url") setUrlError("");
+    setForm((p) => ({ ...p, [key]: value }));
+  };
 
   const submit = (e) => {
     e.preventDefault();
@@ -609,6 +637,17 @@ function RecordDrawer({ tab, mode, initial, projects, saving, onClose, onSave })
     if ((tab === "access" || tab === "machines") && mode === "edit" && !payload.password) delete payload.password;
     for (const [key] of config.fields) {
       if (payload[key] === "") payload[key] = null;
+    }
+    if ((tab === "access" || tab === "credentials") && payload.url) {
+      const unchangedLegacy = mode === "edit" && payload.url === initial?.url && !isSafeHttpUrl(payload.url);
+      if (unchangedLegacy) {
+        delete payload.url;
+      } else if (!isSafeHttpUrl(payload.url)) {
+        setUrlError("Please enter a valid http:// or https:// URL.");
+        return;
+      } else {
+        payload.url = payload.url.trim();
+      }
     }
     onSave(payload);
   };
@@ -662,6 +701,7 @@ function RecordDrawer({ tab, mode, initial, projects, saving, onClose, onSave })
             {tab === "access" && mode === "edit" && (
               <div className="cmx-banner"><ShieldAlert size={14} /><span>Leave Password blank to keep the existing encrypted password unchanged.</span></div>
             )}
+            {urlError && <div className="cmx-error-bar"><AlertTriangle size={14} /><span>{urlError}</span></div>}
           </div>
           <div className="cmx-drawer-foot">
             <button type="button" className="cmx-btn cmx-btn-ghost" onClick={onClose}>Cancel</button>
@@ -761,7 +801,7 @@ function MxCell({ value, copyKey, onCopy, copiedKey, mono, muted, sub }) {
   );
 }
 
-function ExcelMatrixViewModal({ title, rows, onClose, onCopy, copiedKey, onFetchSecret, onFetchAccessPassword, onFetchMachinePassword, onReveal }) {
+function ExcelMatrixViewModal({ title, rows, onClose, onCopy, copiedKey, onFetchSecret, onFetchAccessPassword, onFetchMachinePassword, onReveal, canReveal = false }) {
   const [search, setSearch] = useState("");
   const [selectedModule, setSelectedModule] = useState("");
 
@@ -782,18 +822,24 @@ function ExcelMatrixViewModal({ title, rows, onClose, onCopy, copiedKey, onFetch
     });
   }, [rows, search, selectedModule]);
 
+  const sanitizeCsvCell = (value) => {
+    const str = String(value ?? "");
+    const safe = /^[=+\-@\t\r]|^\s+[=+\-@]/.test(str) ? `'${str}` : str;
+    return `"${safe.replace(/"/g, '""')}"`;
+  };
+
   const exportCSV = () => {
     const headers = ["Module", "Category", "Type", "Name", "Username / Identifier", "URL / Target", "Status"];
     const csvRows = [headers.join(",")];
     for (const r of filtered) {
       const line = [
-        `"${r.module || ""}"`,
-        `"${r.category || ""}"`,
-        `"${r.type || ""}"`,
-        `"${(r.name || "").replace(/"/g, '""')}"`,
-        `"${(r.username || "").replace(/"/g, '""')}"`,
-        `"${(r.url || "").replace(/"/g, '""')}"`,
-        `"${r.status || ""}"`,
+        sanitizeCsvCell(r.module || ""),
+        sanitizeCsvCell(r.category || ""),
+        sanitizeCsvCell(r.type || ""),
+        sanitizeCsvCell(r.name || ""),
+        sanitizeCsvCell(r.username || ""),
+        sanitizeCsvCell(r.url || ""),
+        sanitizeCsvCell(r.status || ""),
       ];
       csvRows.push(line.join(","));
     }
@@ -812,7 +858,7 @@ function ExcelMatrixViewModal({ title, rows, onClose, onCopy, copiedKey, onFetch
     onCopy(str, `${r.key}-fullrow`);
   };
 
-  const isUrl = (v) => typeof v === "string" && /^https?:\/\//i.test(v);
+  const isUrl = isSafeHttpUrl;
 
   return (
     <div className="cmx-matrix-scrim" onMouseDown={onClose}>
@@ -931,7 +977,9 @@ function ExcelMatrixViewModal({ title, rows, onClose, onCopy, copiedKey, onFetch
                       </td>
 
                       <td>
-                        {accId ? (
+                        {!canReveal && (accId || machId || credId) ? (
+                          <span className="cmx-mx-muted">••••••</span>
+                        ) : accId ? (
                           r.row?.has_password === false ? <span className="cmx-mx-muted">—</span> : <AccessSecretCell accessId={accId} onFetchPassword={onFetchAccessPassword} onCopy={onCopy} copyKey={`${r.key}-password`} copiedKey={copiedKey} />
                         ) : machId ? (
                           r.row?.has_password === false ? <span className="cmx-mx-muted">—</span> : <MachineSecretCell machineId={machId} onFetchPassword={onFetchMachinePassword} onCopy={onCopy} copyKey={`${r.key}-password`} copiedKey={copiedKey} />
@@ -943,9 +991,9 @@ function ExcelMatrixViewModal({ title, rows, onClose, onCopy, copiedKey, onFetch
                       </td>
 
                       <td>
-                        {isUrl(r.url) ? (
-                          <a className="cmx-mx-link" href={r.url} target="_blank" rel="noreferrer">
-                            <span>{r.url.length > 34 ? `${r.url.slice(0, 34)}…` : r.url}</span>
+                        {isSafeHttpUrl(r.url) ? (
+                          <a className="cmx-mx-link" href={r.url.trim()} target="_blank" rel="noopener noreferrer">
+                            <span>{r.url.trim().length > 34 ? `${r.url.trim().slice(0, 34)}…` : r.url.trim()}</span>
                             <ExternalLink size={11} />
                           </a>
                         ) : (
@@ -989,7 +1037,7 @@ function ExcelMatrixViewModal({ title, rows, onClose, onCopy, copiedKey, onFetch
    PROJECT CONSOLE
    ================================================================ */
 
-function ProjectConsole({ project, projects, tabRows, tabLoading, onBack, onAdd, onEdit, onDelete, onReveal, onFetchSecret, onFetchAccessPassword, onFetchMachinePassword, onCopy, copiedKey, canWrite }) {
+function ProjectConsole({ project, projects, tabRows, tabLoading, onBack, onAdd, onEdit, onDelete, onReveal, onFetchSecret, onFetchAccessPassword, onFetchMachinePassword, onCopy, copiedKey, canWrite, canReveal = false }) {
   const [section, setSection] = useState("overview");
   const [view, setView] = useState("sections");
   const [allSearch, setAllSearch] = useState("");
@@ -1029,7 +1077,7 @@ function ProjectConsole({ project, projects, tabRows, tabLoading, onBack, onAdd,
     const endpointTab = endpointFor(sectionKey);
     return (
       <span className="cmx-row-actions">
-        {sectionKey === "credentials" && <button type="button" className="cmx-act-reveal" title="Reveal secret" onClick={() => onReveal(row)}><KeyRound size={13} /></button>}
+        {canReveal && sectionKey === "credentials" && <button type="button" className="cmx-act-reveal" title="Reveal secret" onClick={() => onReveal(row)}><KeyRound size={13} /></button>}
         {canWrite && canCrud(sectionKey) && <button type="button" className="cmx-act-edit" title="Edit" onClick={() => onEdit(endpointTab, row)}><Pencil size={13} /></button>}
         {canWrite && canCrud(sectionKey) && <button type="button" className="cmx-act-delete" title="Delete" onClick={() => onDelete(endpointTab, row)}><Trash2 size={13} /></button>}
       </span>
@@ -1060,7 +1108,6 @@ function ProjectConsole({ project, projects, tabRows, tabLoading, onBack, onAdd,
   }, [allRows, allSearch, hiddenModules]);
 
   const toggleModule = (label) => setHiddenModules((prev) => { const n = new Set(prev); n.has(label) ? n.delete(label) : n.add(label); return n; });
-  const isUrl = (v) => typeof v === "string" && /^https?:\/\//i.test(v);
 
   const allColumns = [
     { label: "Module", render: (r) => <span className="cmx-chip" data-m={MODULE_META[r.module]}>{r.module}</span> },
@@ -1073,18 +1120,20 @@ function ProjectConsole({ project, projects, tabRows, tabLoading, onBack, onAdd,
         </span>
       ) },
     { label: "Username / Email", render: (r) => copyCellStatic(r.username, `${r.key}-username`, onCopy, copiedKey) },
-    { label: "Password", render: (r) => r.accessId
-        ? (r.row?.has_password === false ? <span className="cmx-mx-muted">—</span> : <AccessSecretCell accessId={r.accessId} onFetchPassword={onFetchAccessPassword} onCopy={onCopy} copyKey={`${r.key}-password`} copiedKey={copiedKey} />)
-        : r.machineId
-          ? (r.row?.has_password === false ? <span className="cmx-mx-muted">—</span> : <MachineSecretCell machineId={r.machineId} onFetchPassword={onFetchMachinePassword} onCopy={onCopy} copyKey={`${r.key}-password`} copiedKey={copiedKey} />)
-          : (r.row?.has_secret === false ? <span className="cmx-mx-muted">—</span> : <SecretCell credentialId={r.credentialId} onFetchSecret={onFetchSecret} onCopy={onCopy} copyKey={`${r.key}-secret`} copiedKey={copiedKey} />) },
-    { label: "URL / Location", render: (r) => isUrl(r.url) ? <a className="cmx-link" href={r.url} target="_blank" rel="noreferrer">{r.url}</a> : (r.url || "—") },
+    { label: "Password", render: (r) => !canReveal && (r.accessId || r.machineId || r.credentialId)
+        ? <span className="cmx-mx-muted">••••••</span>
+        : r.accessId
+          ? (r.row?.has_password === false ? <span className="cmx-mx-muted">—</span> : <AccessSecretCell accessId={r.accessId} onFetchPassword={onFetchAccessPassword} onCopy={onCopy} copyKey={`${r.key}-password`} copiedKey={copiedKey} />)
+          : r.machineId
+            ? (r.row?.has_password === false ? <span className="cmx-mx-muted">—</span> : <MachineSecretCell machineId={r.machineId} onFetchPassword={onFetchMachinePassword} onCopy={onCopy} copyKey={`${r.key}-password`} copiedKey={copiedKey} />)
+            : (r.row?.has_secret === false ? <span className="cmx-mx-muted">—</span> : <SecretCell credentialId={r.credentialId} onFetchSecret={onFetchSecret} onCopy={onCopy} copyKey={`${r.key}-secret`} copiedKey={copiedKey} />) },
+    { label: "URL / Location", render: (r) => isSafeHttpUrl(r.url) ? <a className="cmx-link" href={r.url.trim()} target="_blank" rel="noopener noreferrer">{r.url.trim()}</a> : (r.url || "—") },
     { label: "Status", render: (r) => r.status ? <StatusDot value={r.status} /> : "—" },
   ];
 
   const renderAllActions = (r) => (
     <span className="cmx-row-actions">
-      {r.credentialId && <button type="button" className="cmx-act-reveal" title="Open in vault" onClick={() => onReveal(r.row)}><KeyRound size={13} /></button>}
+      {canReveal && r.credentialId && <button type="button" className="cmx-act-reveal" title="Open in vault" onClick={() => onReveal(r.row)}><KeyRound size={13} /></button>}
       {canWrite && r.canCrud && <button type="button" className="cmx-act-edit" title={`Edit ${FORM_CONFIG[r.endpointTab]?.title || "record"}`} onClick={() => onEdit(r.endpointTab, r.row)}><Pencil size={13} /></button>}
       {canWrite && r.canCrud && <button type="button" className="cmx-act-delete" title={`Delete ${FORM_CONFIG[r.endpointTab]?.title || "record"}`} onClick={() => onDelete(r.endpointTab, r.row)}><Trash2 size={13} /></button>}
     </span>
@@ -1129,7 +1178,7 @@ function ProjectConsole({ project, projects, tabRows, tabLoading, onBack, onAdd,
     const rows = rowsFor[section] || [];
     const endpointTab = endpointFor(section);
     const title = PROJECT_MODULES.find((m) => m.key === section)?.label || "Details";
-    const columns = columnsFor(section === "connectivity" || section === "automation" ? "credentials" : section, { projectName, onFetchSecret, onFetchAccessPassword, onFetchMachinePassword, onCopy, copiedKey });
+    const columns = columnsFor(section === "connectivity" || section === "automation" ? "credentials" : section, { projectName, onFetchSecret, onFetchAccessPassword, onFetchMachinePassword, onCopy, copiedKey, canReveal });
     return (
       <>
         <div className="cmx-content-head">
@@ -1255,6 +1304,7 @@ export default function ClientManagementCRUDView({ api, session }) {
   const [showGlobalExcelMatrix, setShowGlobalExcelMatrix] = useState(false);
   
   const canWrite = session?.role === "admin";
+  const canReveal = session?.role === "admin";
 
   const cmRequest = useCallback(async (path, options = {}) => {
     if (!cmToken) throw new Error("Credential Management is locked.");
@@ -1639,6 +1689,7 @@ const unlock = async (e) => {
               onCopy={copyValue}
               copiedKey={copiedKey}
               canWrite={canWrite}
+              canReveal={canReveal}
             />
           ) : (
             <div className="cmx-module-shell">
@@ -1689,12 +1740,12 @@ const unlock = async (e) => {
                       <Empty tab={activeModule} title={`No ${CLIENT_MODULES.find(m => m.key === activeModule)?.label.toLowerCase()}`} message="No records exist for this client yet." onAdd={canWrite && FORM_CONFIG[activeModule] ? () => openCreate(activeModule) : null} addLabel={`Add ${FORM_CONFIG[activeModule]?.title || "Record"}`} />
                     ) : (
                       <Ledger
-                        columns={columnsFor(activeModule, { projectName, onFetchSecret: fetchSecretValue, onFetchAccessPassword: fetchAccessPassword, onFetchMachinePassword: fetchMachinePassword, onCopy: copyValue, copiedKey })}
+                        columns={columnsFor(activeModule, { projectName, onFetchSecret: fetchSecretValue, onFetchAccessPassword: fetchAccessPassword, onFetchMachinePassword: fetchMachinePassword, onCopy: copyValue, copiedKey, canReveal })}
                         rows={currentRows}
                         rowKey={(r) => r[ID_FIELD[activeModule]]}
                         renderActions={(row) => (
                           <span className="cmx-row-actions">
-                            {activeModule === "credentials" && <button type="button" className="cmx-act-reveal" title="Reveal secret" onClick={() => revealCredential(row)}><KeyRound size={13} /></button>}
+                            {canReveal && activeModule === "credentials" && <button type="button" className="cmx-act-reveal" title="Reveal secret" onClick={() => revealCredential(row)}><KeyRound size={13} /></button>}
                             {activeModule === "projects" && <button type="button" className="cmx-act-edit" title="Open project" onClick={() => openProject(row)}><LayoutGrid size={13} /></button>}
                             {canWrite && <button type="button" className="cmx-act-edit" title="Edit" onClick={() => openEdit(activeModule, row)}><Pencil size={13} /></button>}
                             {canWrite && <button type="button" className="cmx-act-delete" title="Delete" onClick={() => setDeleteTarget({ tab: activeModule, row })}><Trash2 size={13} /></button>}
@@ -1721,6 +1772,7 @@ const unlock = async (e) => {
           onFetchAccessPassword={fetchAccessPassword}
           onFetchMachinePassword={fetchMachinePassword}
           onReveal={revealCredential}
+          canReveal={canReveal}
         />
       )}
 

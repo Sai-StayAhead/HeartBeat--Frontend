@@ -22,3 +22,7 @@ dist-ssr
 *.njsproj
 *.sln
 *.sw?
+
+# Local backup archives & dumps (never track in Git)
+*.zip
+*backup.txt

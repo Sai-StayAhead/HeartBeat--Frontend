@@ -51,6 +51,16 @@ function isImageAttachment(att) {
     return ct.startsWith("image/") || /\.(png|jpe?g|webp|gif)$/i.test(name);
 }
 
+function isPdfAttachment(att) {
+    const ct = String(att?.content_type || att?.type || "").toLowerCase();
+    const name = String(att?.filename || att?.name || "").toLowerCase();
+    return ct === "application/pdf" || /\.pdf$/i.test(name);
+}
+
+function isSafeBlobUrl(url) {
+    return typeof url === "string" && url.startsWith("blob:");
+}
+
 function validateAttachmentFile(file) {
     if (!file) return "Invalid file.";
     const ext = String(file.name || "").split(".").pop()?.toLowerCase() || "";
@@ -514,14 +524,16 @@ function ActionItemCard({
                     </span>
 
                     <div className="hb-ai-task-card-actions" onClick={(e) => e.stopPropagation()}>
-                        <button
-                            type="button"
-                            className="hb-ai-icon-btn"
-                            title="Edit"
-                            onClick={() => onEdit?.(item)}
-                        >
-                            <Pencil size={13} />
-                        </button>
+                        {onEdit && (
+                            <button
+                                type="button"
+                                className="hb-ai-icon-btn"
+                                title="Edit"
+                                onClick={() => onEdit(item)}
+                            >
+                                <Pencil size={13} />
+                            </button>
+                        )}
                         {!clientMode && onDelete && (
                             <button
                                 type="button"
@@ -674,17 +686,19 @@ function TaskRow({
             <td><StatusBadge status={item.status} /></td>
             <td><PriorityBadge priority={item.priority} /></td>
             <td className="hb-ai-cell-actions">
-                <button
-                    type="button"
-                    className="hb-ai-icon-btn"
-                    title="Edit"
-                    onClick={(event) => {
-                        event.stopPropagation();
-                        onEdit(item);
-                    }}
-                >
-                    <Pencil size={13} />
-                </button>
+                {onEdit && (
+                    <button
+                        type="button"
+                        className="hb-ai-icon-btn"
+                        title="Edit"
+                        onClick={(event) => {
+                            event.stopPropagation();
+                            onEdit(item);
+                        }}
+                    >
+                        <Pencil size={13} />
+                    </button>
+                )}
                 {!clientMode && onDelete && (
                     <button
                         type="button"
@@ -918,15 +932,17 @@ function ActionItemModal({
                             )}
                         </div>
 
-                        <label className="hb-action-field">
-                            <span>Remarks</span>
-                            <textarea
-                                value={form.remarks}
-                                onChange={(e) => update("remarks", e.target.value)}
-                                placeholder="Add notes or follow-up remarks..."
-                                rows={3}
-                            />
-                        </label>
+                        {!clientMode && (
+                            <label className="hb-action-field">
+                                <span>Remarks</span>
+                                <textarea
+                                    value={form.remarks}
+                                    onChange={(e) => update("remarks", e.target.value)}
+                                    placeholder="Add notes or follow-up remarks..."
+                                    rows={3}
+                                />
+                            </label>
+                        )}
 
                         <div className="hb-action-field" style={{ marginTop: 14 }}>
                             <span>Attachments (Photo or PDF, max 10 MB each)</span>
@@ -1029,6 +1045,8 @@ function ActionItemDetailsModal({
     onAttachmentsUpdated,
     onClose,
     onEdit,
+    readOnly = false,
+    clientMode = false,
 }) {
     const [copied, setCopied] = useState(false);
     const [attError, setAttError] = useState("");
@@ -1059,6 +1077,12 @@ function ActionItemDetailsModal({
     if (!item) return null;
 
     const handleViewAttachment = async (att) => {
+        const isImg = isImageAttachment(att);
+        const isPdf = isPdfAttachment(att);
+        if (!isImg && !isPdf) {
+            setAttError("Inline preview is restricted to images and PDF files. Please download the file instead.");
+            return;
+        }
         setAttError("");
         setBusyAttId(att.attachment_id);
         try {
@@ -1066,7 +1090,16 @@ function ActionItemDetailsModal({
                 responseType: "blob",
             });
             if (!blob) throw new Error("Unable to load attachment.");
-            const url = URL.createObjectURL(blob);
+            let safeBlob = blob;
+            if (isPdf) {
+                const headerBytes = new Uint8Array(await blob.slice(0, 5).arrayBuffer());
+                const signature = String.fromCharCode(...headerBytes);
+                if (!signature.startsWith("%PDF-")) {
+                    throw new Error("Invalid PDF file content.");
+                }
+                safeBlob = new Blob([blob], { type: "application/pdf" });
+            }
+            const url = URL.createObjectURL(safeBlob);
             setPreviewData((prev) => {
                 if (prev?.url) URL.revokeObjectURL(prev.url);
                 return { attachment: att, url };
@@ -1263,6 +1296,47 @@ function ActionItemDetailsModal({
                         </div>
                     </div>
 
+                    {clientMode && (
+                        <div
+                            style={{
+                                display: "flex",
+                                alignItems: "center",
+                                gap: 8,
+                                marginBottom: 14,
+                                padding: "10px 12px",
+                                borderRadius: 8,
+                                background: "var(--surface-2, rgba(148, 163, 184, 0.08))",
+                                border: "1px solid var(--border, rgba(148, 163, 184, 0.2))",
+                                fontSize: 12,
+                                flexWrap: "wrap",
+                            }}
+                        >
+                            <span style={{ fontWeight: 600, color: "var(--text-dim)" }}>Request Progress:</span>
+                            {[
+                                { label: "1. Submitted", done: true },
+                                {
+                                    label: "2. In Review / Work",
+                                    done: item.status !== "NOT_STARTED",
+                                },
+                                { label: "3. Completed", done: item.status === "COMPLETED" },
+                            ].map((step) => (
+                                <span
+                                    key={step.label}
+                                    style={{
+                                        padding: "3px 8px",
+                                        borderRadius: 999,
+                                        fontWeight: 600,
+                                        background: step.done ? "rgba(34, 197, 94, 0.14)" : "transparent",
+                                        color: step.done ? "var(--success, #22c55e)" : "var(--text-dim)",
+                                        border: `1px solid ${step.done ? "rgba(34, 197, 94, 0.35)" : "var(--border, rgba(148,163,184,0.25))"}`,
+                                    }}
+                                >
+                                    {step.label}
+                                </span>
+                            ))}
+                        </div>
+                    )}
+
                     <div className="hb-action-form-grid">
                         <div className="hb-action-field">
                             <span>Category</span>
@@ -1302,7 +1376,7 @@ function ActionItemDetailsModal({
                         </div>
 
                         <div className="hb-action-field">
-                            <span>Assigned To</span>
+                            <span>{clientMode ? "Assigned Administrator" : "Assigned To"}</span>
                             <div className="hb-ai-detail-value">
                                 {assignedName}
                             </div>
@@ -1319,6 +1393,24 @@ function ActionItemDetailsModal({
                             <span>Due Date</span>
                             <div className="hb-ai-detail-value">
                                 {formatDate(item.due_date)}
+                            </div>
+                        </div>
+
+                        <div className="hb-action-field">
+                            <span>Created At</span>
+                            <div className="hb-ai-detail-value">
+                                {item.created_at
+                                    ? new Date(item.created_at).toLocaleString()
+                                    : "—"}
+                            </div>
+                        </div>
+
+                        <div className="hb-action-field">
+                            <span>Last Updated</span>
+                            <div className="hb-ai-detail-value">
+                                {item.updated_at
+                                    ? new Date(item.updated_at).toLocaleString()
+                                    : "—"}
                             </div>
                         </div>
 
@@ -1340,31 +1432,33 @@ function ActionItemDetailsModal({
                     </div>
 
                     <div className="hb-action-field">
-                        <span>Remarks</span>
+                        <span>{clientMode ? "Administrator Updates & Comments" : "Remarks"}</span>
 
                         <div className="hb-ai-detail-value multiline">
-                            {item.remarks || "No remarks added."}
+                            {item.remarks || (clientMode ? "No administrator updates yet." : "No remarks added.")}
                         </div>
                     </div>
 
                     <div className="hb-action-field" style={{ marginTop: 14 }}>
                         <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 8, flexWrap: "wrap" }}>
                             <span>Attachments ({attachments.length})</span>
-                            <label className="hb-action-secondary-btn" style={{ padding: "5px 10px", fontSize: 11.5, cursor: "pointer", display: "inline-flex", alignItems: "center", gap: 5 }}>
-                                <input
-                                    type="file"
-                                    accept=".png,.jpg,.jpeg,.webp,.gif,.pdf,image/png,image/jpeg,image/webp,image/gif,application/pdf"
-                                    multiple
-                                    style={{ display: "none" }}
-                                    disabled={uploadingAtt}
-                                    onChange={(e) => {
-                                        if (e.target.files?.length) handleUploadMore(e.target.files);
-                                        e.target.value = "";
-                                    }}
-                                />
-                                {uploadingAtt ? <Loader2 size={12} className="hb-action-spin" /> : <Upload size={12} />}
-                                {uploadingAtt ? "Uploading..." : "Attach Photo / PDF"}
-                            </label>
+                            {!readOnly && (
+                                <label className="hb-action-secondary-btn" style={{ padding: "5px 10px", fontSize: 11.5, cursor: "pointer", display: "inline-flex", alignItems: "center", gap: 5 }}>
+                                    <input
+                                        type="file"
+                                        accept=".png,.jpg,.jpeg,.webp,.gif,.pdf,image/png,image/jpeg,image/webp,image/gif,application/pdf"
+                                        multiple
+                                        style={{ display: "none" }}
+                                        disabled={uploadingAtt}
+                                        onChange={(e) => {
+                                            if (e.target.files?.length) handleUploadMore(e.target.files);
+                                            e.target.value = "";
+                                        }}
+                                    />
+                                    {uploadingAtt ? <Loader2 size={12} className="hb-action-spin" /> : <Upload size={12} />}
+                                    {uploadingAtt ? "Uploading..." : "Attach Photo / PDF"}
+                                </label>
+                            )}
                         </div>
 
                         {attError && (
@@ -1414,15 +1508,17 @@ function ActionItemDetailsModal({
                                             >
                                                 <Download size={13} />
                                             </button>
-                                            <button
-                                                type="button"
-                                                className="hb-ai-icon-btn danger"
-                                                title="Remove attachment"
-                                                disabled={busyAttId === att.attachment_id}
-                                                onClick={() => handleDeleteAtt(att)}
-                                            >
-                                                <Trash2 size={13} />
-                                            </button>
+                                            {!readOnly && (
+                                                <button
+                                                    type="button"
+                                                    className="hb-ai-icon-btn danger"
+                                                    title="Remove attachment"
+                                                    disabled={busyAttId === att.attachment_id}
+                                                    onClick={() => handleDeleteAtt(att)}
+                                                >
+                                                    <Trash2 size={13} />
+                                                </button>
+                                            )}
                                         </div>
                                     </div>
                                 ))}
@@ -1456,14 +1552,21 @@ function ActionItemDetailsModal({
                                 </div>
                             </div>
                             <div className="hb-ai-preview-body">
-                                {isImageAttachment(previewData.attachment) ? (
+                                {isImageAttachment(previewData.attachment) && isSafeBlobUrl(previewData.url) ? (
                                     <img src={previewData.url} alt={previewData.attachment.filename} className="hb-ai-preview-img" />
-                                ) : (
+                                ) : isPdfAttachment(previewData.attachment) && isSafeBlobUrl(previewData.url) ? (
                                     <iframe
                                         src={previewData.url}
                                         title={previewData.attachment.filename}
                                         className="hb-ai-preview-pdf"
+                                        sandbox="allow-same-origin allow-downloads"
+                                        referrerPolicy="no-referrer"
                                     />
+                                ) : (
+                                    <div className="hb-ai-empty">
+                                        <strong>Preview unavailable</strong>
+                                        <span>Use the Download button above to open this file locally.</span>
+                                    </div>
                                 )}
                             </div>
                         </div>
@@ -1501,7 +1604,9 @@ function ActionItemDetailsModal({
 /* Root                                                                */
 /* ------------------------------------------------------------------ */
 
-export default function ActionItems({ api, targetActionItem, onClearTargetActionItem, clientMode = false, clientId = null, liveEvents = [] }) {
+export default function ActionItems({ api, targetActionItem, onClearTargetActionItem, clientMode = false, clientId = null, liveEvents = [], readOnly = false }) {
+    const canWrite = !readOnly;
+    const canDelete = !readOnly && !clientMode;
     const [reportDate, setReportDate] = useState(todayISO());
     const [report, setReport] = useState(null);
     const [clients, setClients] = useState([]);
@@ -1521,7 +1626,7 @@ export default function ActionItems({ api, targetActionItem, onClearTargetAction
     const [fileError, setFileError] = useState("");
     const [deletingAttachmentId, setDeletingAttachmentId] = useState(null);
 
-    const [activeTab, setActiveTab] = useState("TODAY");
+    const [activeTab, setActiveTab] = useState(clientMode ? "ALL" : "TODAY");
     const [viewMode, setViewMode] = useState("CARDS");
     const [search, setSearch] = useState("");
     const [clientFilter, setClientFilter] = useState("");
@@ -1571,22 +1676,24 @@ export default function ActionItems({ api, targetActionItem, onClearTargetAction
     }, [api, reportDate, clientMode]);
 
     const loadOptions = useCallback(async () => {
-        try {
-            const clientsResponse = await api("/clients/");
-            const clientData = getResponseData(clientsResponse);
-            setClients(Array.isArray(clientData)
-                ? clientData.sort((a, b) => String(a.client_name || "").trim().localeCompare(String(b.client_name || "").trim(), undefined, { sensitivity: "base" }))
-                : []);
-        } catch (err) {
-            console.warn("Action item client loading failed:", err);
-        }
+        if (!clientMode) {
+            try {
+                const clientsResponse = await api("/clients/");
+                const clientData = getResponseData(clientsResponse);
+                setClients(Array.isArray(clientData)
+                    ? clientData.sort((a, b) => String(a.client_name || "").trim().localeCompare(String(b.client_name || "").trim(), undefined, { sensitivity: "base" }))
+                    : []);
+            } catch (err) {
+                console.warn("Action item client loading failed:", err);
+            }
 
-        try {
-            const usersResponse = await api("/auth/users/assignees");
-            const userData = getResponseData(usersResponse);
-            setUsers(Array.isArray(userData) ? userData : []);
-        } catch (err) {
-            console.warn("Action item user loading failed:", err);
+            try {
+                const usersResponse = await api("/auth/users/assignees");
+                const userData = getResponseData(usersResponse);
+                setUsers(Array.isArray(userData) ? userData : []);
+            } catch (err) {
+                console.warn("Action item user loading failed:", err);
+            }
         }
 
         try {
@@ -1598,7 +1705,7 @@ export default function ActionItems({ api, targetActionItem, onClearTargetAction
         } catch (err) {
             console.warn("Action item bot loading failed:", err);
         }
-    }, [api]);
+    }, [api, clientMode]);
 
     useEffect(() => { loadOptions(); }, [loadOptions]);
 
@@ -1611,14 +1718,16 @@ export default function ActionItems({ api, targetActionItem, onClearTargetAction
         return () => clearInterval(interval);
     }, [loadReport]);
 
+    const latestEventKey = liveEvents?.[0]?._eventSeq ?? liveEvents?.[0]?._receivedAt ?? 0;
+
     useEffect(() => {
         if (!liveEvents?.length) return;
-        const latest = liveEvents[liveEvents.length - 1];
+        const latest = liveEvents[0];
         const ev = latest?.event;
         if (ev === "action_item_updated" || ev === "new_notification") {
             loadReport(true);
         }
-    }, [liveEvents.length, loadReport]);
+    }, [latestEventKey, liveEvents, loadReport]);
 
     // When navigated via "View Action Item" from notifications or direct /tickets/<KEY> URL
     useEffect(() => {
@@ -1863,6 +1972,7 @@ export default function ActionItems({ api, targetActionItem, onClearTargetAction
     };
 
     const openCreate = () => {
+        if (readOnly) return;
         setPendingFiles([]);
         setFileError("");
         setDeletingAttachmentId(null);
@@ -1890,6 +2000,7 @@ export default function ActionItems({ api, targetActionItem, onClearTargetAction
         }
     };
     const openEdit = async (item) => {
+        if (readOnly) return;
         try {
             setError("");
             setNotice("");
@@ -1972,20 +2083,30 @@ export default function ActionItems({ api, targetActionItem, onClearTargetAction
             }
         };
 
-        const payload = {
-            client_id: form.client_id ? Number(form.client_id) : (clientMode && clientId ? Number(clientId) : null),
-            bot_id: form.bot_id ? Number(form.bot_id) : null,
-            task_title: form.task_title.trim(),
-            description: form.description.trim() || null,
-            category: form.category,
-            status: form.status,
-            priority: form.priority,
-            assigned_user_id: form.assigned_user_id ? Number(form.assigned_user_id) : null,
-            task_date: form.task_date || todayISO(),
-            due_date: form.due_date || null,
-            next_follow_up_date: form.next_follow_up_date || null,
-            remarks: form.remarks.trim() || null,
-        };
+        const payload = clientMode
+            ? {
+                ...(editingItem ? {} : { client_id: clientId ? Number(clientId) : null }),
+                bot_id: form.bot_id ? Number(form.bot_id) : null,
+                task_title: form.task_title.trim(),
+                description: form.description.trim() || null,
+                category: form.category,
+                priority: form.priority,
+                due_date: form.due_date || null,
+            }
+            : {
+                client_id: form.client_id ? Number(form.client_id) : null,
+                bot_id: form.bot_id ? Number(form.bot_id) : null,
+                task_title: form.task_title.trim(),
+                description: form.description.trim() || null,
+                category: form.category,
+                status: form.status,
+                priority: form.priority,
+                assigned_user_id: form.assigned_user_id ? Number(form.assigned_user_id) : null,
+                task_date: form.task_date || todayISO(),
+                due_date: form.due_date || null,
+                next_follow_up_date: form.next_follow_up_date || null,
+                remarks: form.remarks.trim() || null,
+            };
 
         try {
             if (editingItem) {
@@ -2054,14 +2175,16 @@ export default function ActionItems({ api, targetActionItem, onClearTargetAction
             {/* Hero */}
             <div className="hb-ai-hero">
                 <div>
-                    <h1 className="hb-ai-title">{clientMode ? "Support & Tickets" : "Action Items"}</h1>
+                    <h1 className="hb-ai-title">{clientMode ? "My Requests & Tickets" : "Action Items"}</h1>
                     <p className="hb-ai-subtitle">
-                        {clientMode ? "Raise tickets, track issues and request bot enhancements." : "Track and manage your tasks efficiently."}
+                        {clientMode ? "Raise requests, track status progress, and view administrator updates." : "Track and manage your tasks efficiently."}
                     </p>
                 </div>
-                <button type="button" className="hb-action-primary-btn hb-ai-add-btn" onClick={openCreate}>
-                    <Plus size={15} /> {clientMode ? "Raise Ticket" : "Add Action Item"}
-                </button>
+                {canWrite && (
+                    <button type="button" className="hb-action-primary-btn hb-ai-add-btn" onClick={openCreate}>
+                        <Plus size={15} /> {clientMode ? "Raise Request" : "Add Action Item"}
+                    </button>
+                )}
             </div>
 
             {error && (
@@ -2282,8 +2405,8 @@ export default function ActionItems({ api, targetActionItem, onClearTargetAction
                                         usersById={usersById}
                                         clientMode={clientMode}
                                         todayStr={todayStr}
-                                        onEdit={openEdit}
-                                        onDelete={handleDelete}
+                                        onEdit={canWrite ? openEdit : undefined}
+                                        onDelete={canDelete ? handleDelete : undefined}
                                         onViewDetails={openDetails}
                                     />
                                 ))}
@@ -2326,8 +2449,8 @@ export default function ActionItems({ api, targetActionItem, onClearTargetAction
                                             clientsById={clientsById}
                                             usersById={usersById}
                                             clientMode={clientMode}
-                                            onEdit={openEdit}
-                                            onDelete={handleDelete}
+                                            onEdit={canWrite ? openEdit : undefined}
+                                            onDelete={canDelete ? handleDelete : undefined}
                                             onViewDetails={openDetails}
                                         />
                                     ))
@@ -2389,7 +2512,9 @@ export default function ActionItems({ api, targetActionItem, onClearTargetAction
                 }
                 assignedName={resolveAssignedName(detailsItem, usersById, "Unassigned")}
                 onClose={closeDetails}
-                onEdit={openEdit}
+                onEdit={canWrite ? openEdit : undefined}
+                readOnly={readOnly}
+                clientMode={clientMode}
             />
         </div>
     );

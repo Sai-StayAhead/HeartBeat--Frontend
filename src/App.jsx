@@ -46,9 +46,13 @@ function decodeJwtExpiryMs(token) {
    Concurrent 401s share a single in-flight refresh call. */
 function useApi(baseUrl, session, onTokensRefreshed, onUnauthorized) {
   const refreshingRef = useRef(null);
+  const refreshTokenRef = useRef(session?.refreshToken);
+  refreshTokenRef.current = session?.refreshToken;
 
   const doRefresh = useCallback(async () => {
     if (refreshingRef.current) return refreshingRef.current;
+    const currentRefreshToken = refreshTokenRef.current;
+    if (!currentRefreshToken) throw new Error("no refresh token");
     refreshingRef.current = (async () => {
       const res = await fetch(`${baseUrl || ""}/auth/refresh`, {
         method: "POST",
@@ -56,10 +60,11 @@ function useApi(baseUrl, session, onTokensRefreshed, onUnauthorized) {
           "Content-Type": "application/json",
           "ngrok-skip-browser-warning": "true",
         },
-        body: JSON.stringify({ refresh_token: session?.refreshToken }),
+        body: JSON.stringify({ refresh_token: currentRefreshToken }),
       });
       if (!res.ok) throw new Error("refresh failed");
       const data = await res.json();
+      refreshTokenRef.current = data.refresh_token;
       onTokensRefreshed(data.access_token, data.refresh_token);
       return data.access_token;
     })();
@@ -68,7 +73,7 @@ function useApi(baseUrl, session, onTokensRefreshed, onUnauthorized) {
     } finally {
       refreshingRef.current = null;
     }
-  }, [baseUrl, session?.refreshToken, onTokensRefreshed]);
+  }, [baseUrl, onTokensRefreshed]);
 
   const request = useCallback(
     async (path, options = {}, token, isRetry = false) => {
@@ -1711,33 +1716,44 @@ function BotRunStatusActions({
   );
 }
 
-function ClientBotDetailModal({ api, client, isAdmin = false, isSuperAdmin = false, onStatusUpdated, onClose }) {
+function ClientBotDetailModal({ api, client = null, department = null, timezone = null, isAdmin = false, isSuperAdmin = false, onStatusUpdated, onClose }) {
   const [bots, setBots] = useState([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
 
   useEffect(() => {
+    let cancelled = false;
     (async () => {
       setLoading(true);
       setError("");
       try {
-        const res = await api(`/dashboard/running-bots?client_id=${client.client_id}`);
-        setBots(res || []);
+        const params = new URLSearchParams();
+        if (client?.client_id != null) params.set("client_id", client.client_id);
+        if (department) params.set("department", department);
+        if (timezone) params.set("timezone", timezone);
+        const qs = params.toString();
+        const res = await api(`/dashboard/running-bots${qs ? `?${qs}` : ""}`);
+        if (!cancelled) setBots(res || []);
       } catch (err) {
-        setError(err.message);
+        if (!cancelled) setError(err.message);
       } finally {
-        setLoading(false);
+        if (!cancelled) setLoading(false);
       }
     })();
-  }, [api, client.client_id]);
+    return () => { cancelled = true; };
+  }, [api, client?.client_id, department, timezone]);
+
+  const modalTitle = client?.client_name
+    ? `${client.client_name} — running bots`
+    : "Currently running bots";
 
   return (
-    <Modal title={`${client.client_name} — running bots`} onClose={onClose} width={520}>
+    <Modal title={modalTitle} onClose={onClose} width={540}>
       <ErrorBanner message={error} onDismiss={() => setError("")} />
       {loading && <div style={{ color: "var(--text-dim)", fontSize: 13, padding: "10px 0" }}>Loading…</div>}
       {!loading && bots.length === 0 && (
         <div style={{ color: "var(--text-dim)", fontSize: 13, padding: "10px 0" }}>
-          No bots currently running for this client.
+          {client?.client_name ? "No bots currently running for this client." : "No bots currently running."}
         </div>
       )}
       <div className="hb-scroll" style={{ maxHeight: 360, overflowY: "auto" }}>
@@ -1749,7 +1765,11 @@ function ClientBotDetailModal({ api, client, isAdmin = false, isSuperAdmin = fal
             <StatusDot status="Started" />
             <div style={{ flex: 1, minWidth: 0 }}>
               <div style={{ fontSize: 13.5, fontWeight: 500 }}>{b.bot_name}</div>
-              <div style={{ fontSize: 11.5, color: "var(--text-dim)" }}>Started {timeAgo(b.start_time)}</div>
+              <div style={{ fontSize: 11.5, color: "var(--text-dim)" }}>
+                {!client?.client_name && b.client_name ? `${b.client_name} · ` : ""}
+                {b.department ? `${b.department} · ` : ""}
+                Started {timeAgo(b.start_time)}
+              </div>
             </div>
             <Badge tone="warning">Running</Badge>
             {isSuperAdmin && (
@@ -1822,25 +1842,54 @@ function ClientCountChip({ client, index, onClick }) {
 /* Shows only clients that currently have at least one bot running —
    the whole point of the strip is "who's active right now", so idle
    clients (running_count === 0) are filtered out rather than listed. */
-function ClientActivityStrip({ api, isAdmin = false, isSuperAdmin = false, onStatusUpdated }) {
+function ClientActivityStrip({
+  api,
+  clientId = null,
+  department = null,
+  timezone = DEFAULT_DISPLAY_TIMEZONE,
+  liveEvents = [],
+  wsConnected = false,
+  isAdmin = false,
+  isSuperAdmin = false,
+  onStatusUpdated,
+}) {
   const [clients, setClients] = useState([]);
   const [error, setError] = useState("");
   const [detailClient, setDetailClient] = useState(null);
+  const prevWsRef = useRef(wsConnected);
+  const latestEventKey = liveEvents[0]?._eventSeq ?? liveEvents[0]?._receivedAt ?? 0;
 
   const load = useCallback(async () => {
     try {
-      const res = await api("/dashboard/client-activity");
+      const params = new URLSearchParams();
+      if (clientId != null) params.set("client_id", clientId);
+      if (department) params.set("department", department);
+      if (timezone) params.set("timezone", timezone);
+      const qs = params.toString();
+      const res = await api(`/dashboard/client-activity${qs ? `?${qs}` : ""}`);
       setClients(res || []);
+      setError("");
     } catch (err) {
       setError(err.message);
     }
-  }, [api]);
+  }, [api, clientId, department, timezone]);
 
   useEffect(() => {
     load();
-    const id = setInterval(load, 8000); // keep counts fresh without needing a websocket event
+    const id = setInterval(load, 8000); // keep counts fresh as fallback
     return () => clearInterval(id);
   }, [load]);
+
+  useEffect(() => {
+    if (latestEventKey) load();
+  }, [latestEventKey, load]);
+
+  useEffect(() => {
+    if (!prevWsRef.current && wsConnected) {
+      load();
+    }
+    prevWsRef.current = wsConnected;
+  }, [wsConnected, load]);
 
   const runningClients = clients.filter((c) => (c.running_count ?? 0) > 0);
 
@@ -1865,6 +1914,8 @@ function ClientActivityStrip({ api, isAdmin = false, isSuperAdmin = false, onSta
         <ClientBotDetailModal
           api={api}
           client={detailClient}
+          department={department}
+          timezone={timezone}
           isAdmin={isAdmin}
           isSuperAdmin={isSuperAdmin}
           onStatusUpdated={() => {
@@ -1942,10 +1993,18 @@ function ExecutionPulse({ wsConnected, statusSummary, runningCount }) {
   );
 }
 
-function DashboardMetric({ icon: Icon, label, value, tone = "accent", note, pulse = false }) {
+function DashboardMetric({ icon: Icon, label, value, tone = "accent", note, pulse = false, onClick, title }) {
   const toneColor = tone === "success" ? "var(--success)" : tone === "danger" ? "var(--danger)" : tone === "warning" ? "var(--warning)" : "var(--accent)";
   return (
-    <div className={`hb-dash-metric hb-dash-metric-${tone}${pulse ? " is-live" : ""}`}>
+    <div
+      className={`hb-dash-metric hb-dash-metric-${tone}${pulse ? " is-live" : ""}`}
+      onClick={onClick}
+      role={onClick ? "button" : undefined}
+      tabIndex={onClick ? 0 : undefined}
+      title={title}
+      onKeyDown={onClick ? (e) => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); onClick(); } } : undefined}
+      style={onClick ? { cursor: "pointer" } : undefined}
+    >
       <div className="hb-dash-metric-top">
         <span className="hb-metric-icon" style={{ color: toneColor }}><Icon size={16} /></span>
         <span className="hb-eyebrow">{label}</span>
@@ -2686,6 +2745,7 @@ function DashboardView({ api, wsConnected, liveEvents, isAdmin, isSuperAdmin = f
   const [recentDateFilter, setRecentDateFilter] = useState("today");
   const [customRunDate, setCustomRunDate] = useState("");
   const [selectedRunLog, setSelectedRunLog] = useState(null);
+  const [runningModalOpen, setRunningModalOpen] = useState(false);
   const [historyExpanded, setHistoryExpanded] = useState(true);
   const [period, setPeriod] = useState("day");
 
@@ -2757,8 +2817,17 @@ function DashboardView({ api, wsConnected, liveEvents, isAdmin, isSuperAdmin = f
     }
   }, [api, buildQs, period]);
 
+  const latestEventKey = liveEvents[0]?._eventSeq ?? liveEvents[0]?._receivedAt ?? 0;
+  const prevWsConnectedRef = useRef(wsConnected);
+
   useEffect(() => { load(); }, [load]);
-  useEffect(() => { if (liveEvents.length) load(); }, [liveEvents.length]); // eslint-disable-line react-hooks/exhaustive-deps
+  useEffect(() => { if (latestEventKey) load(); }, [latestEventKey]); // eslint-disable-line react-hooks/exhaustive-deps
+  useEffect(() => {
+    if (!prevWsConnectedRef.current && wsConnected) {
+      load();
+    }
+    prevWsConnectedRef.current = wsConnected;
+  }, [wsConnected, load]);
 
   const todayStr = useMemo(() => getTodayStr(activeTimezone), [activeTimezone]);
   const yesterdayStr = useMemo(() => getYesterdayStr(activeTimezone), [activeTimezone]);
@@ -2995,13 +3064,34 @@ function DashboardView({ api, wsConnected, liveEvents, isAdmin, isSuperAdmin = f
         </div>
       </section>
 
-      {isAdmin && <ClientActivityStrip api={api} isAdmin={isAdmin} isSuperAdmin={effectiveSuperAdmin} onStatusUpdated={load} />}
+      {isAdmin && (
+        <ClientActivityStrip
+          api={api}
+          clientId={clientId}
+          department={department}
+          timezone={activeTimezone}
+          liveEvents={liveEvents}
+          wsConnected={wsConnected}
+          isAdmin={isAdmin}
+          isSuperAdmin={effectiveSuperAdmin}
+          onStatusUpdated={load}
+        />
+      )}
 
       <section className="hb-today-section">
         <div className="hb-section-rule"><div className="hb-eyebrow">Today's run summary</div><span className="hb-section-date">{new Intl.DateTimeFormat("en-US", { weekday: "short", month: "short", day: "numeric", timeZone: activeTimezone }).format(new Date())}</span></div>
         <div className="hb-today-grid">
           <DashboardMetric icon={Activity} label="Total runs" value={todayRuns} tone="accent" note={runsPctChange != null ? `${runsPctChange >= 0 ? "+" : ""}${runsPctChange}% vs yesterday` : "Today's execution volume"} />
-          <DashboardMetric icon={Clock} label="Running now" value={summary?.running_bots ?? "—"} tone="warning" note="Active executions" pulse={Number(summary?.running_bots || 0) > 0} />
+          <DashboardMetric
+            icon={Clock}
+            label="Running now"
+            value={summary?.running_bots ?? "—"}
+            tone="warning"
+            note="Click to inspect running bots"
+            pulse={Number(summary?.running_bots || 0) > 0}
+            onClick={() => setRunningModalOpen(true)}
+            title="Click to inspect currently running bots"
+          />
           <DashboardMetric icon={CheckCircle2} label="Success" value={todaySuccess} tone="success" note="Completed successfully" />
           <DashboardMetric icon={XCircle} label="Failed" value={todayFailed} tone="danger" note="Requires attention" pulse={todayFailed > 0} />
           <div className="hb-today-hours-card">
@@ -3207,6 +3297,26 @@ function DashboardView({ api, wsConnected, liveEvents, isAdmin, isSuperAdmin = f
           isSuperAdmin={effectiveSuperAdmin}
           onStatusUpdated={() => load()}
           onClose={() => setSelectedRunLog(null)}
+        />
+      )}
+
+      {runningModalOpen && (
+        <ClientBotDetailModal
+          api={api}
+          client={
+            isAdmin && clientId
+              ? {
+                  client_id: clientId,
+                  client_name: clientOptions.find((c) => String(c.value) === String(clientId))?.label || "Selected Client",
+                }
+              : null
+          }
+          department={department}
+          timezone={activeTimezone}
+          isAdmin={isAdmin}
+          isSuperAdmin={effectiveSuperAdmin}
+          onStatusUpdated={() => load()}
+          onClose={() => setRunningModalOpen(false)}
         />
       )}
 
@@ -7012,7 +7122,7 @@ const NAV_ADMIN = [
 ];
 const NAV_CLIENT = [
   { key: "dashboard", label: "Dashboard", icon: LayoutDashboard },
-  { key: "tickets", label: "Tickets", icon: ClipboardList },
+  { key: "tickets", label: "My Requests", icon: ClipboardList },
   { key: "contact", label: "Contact", icon: MessageSquare },
   { key: "reports", label: "Bot Reports", icon: FileBarChart },
   { key: "failures", label: "Failures", icon: AlertOctagon },
@@ -7169,8 +7279,8 @@ function AppShell({ session, onLogout, onSessionExpired, onTokensRefreshed, them
     try { return localStorage.getItem(SIDEBAR_KEY) === "1"; } catch (_) { return false; }
   });
   // Replace these 2 lines in AppShell:
-  const isSuperAdmin = role === "admin";
-  const isAnyAdmin = ["admin", "admin2", "admin3"].includes(role);
+  const isSuperAdmin = role === "admin" || role === "superadmin";
+  const isAnyAdmin = ["admin", "superadmin", "admin2", "admin3"].includes(role);
   const isAdmin = isAnyAdmin;
   const isTimezoneVisible = role === "admin" || role === "admin2";
 
@@ -7246,22 +7356,45 @@ function AppShell({ session, onLogout, onSessionExpired, onTokensRefreshed, them
     const host = (baseUrl && baseUrl.startsWith("http"))
       ? baseUrl.replace(/^https?:\/\//, "")
       : window.location.host;
-    const wsUrl = `${protocol}//${host}/ws?token=${encodeURIComponent(token)}`;
     let ws;
     let retryTimer;
     let closed = false;
     let attempt = 0;
 
-    const connect = () => {
+    const scheduleReconnect = () => {
       if (closed) return;
-      try { ws = new WebSocket(wsUrl); } catch (_) { setWsConnected(false); return; }
+      const delay = Math.min(1000 * 2 ** attempt, 15000);
+      attempt += 1;
+      retryTimer = setTimeout(connect, delay);
+    };
+
+    const connect = async () => {
+      if (closed) return;
+      let wsUrl;
+      try {
+        const res = await fetch(`${baseUrl || ""}/auth/ws-ticket`, {
+          method: "POST",
+          headers: {
+            Authorization: `Bearer ${token}`,
+            "ngrok-skip-browser-warning": "true",
+          },
+        });
+        if (!res.ok) throw new Error(`ws-ticket failed (${res.status})`);
+        const ticketData = await res.json();
+        if (!ticketData?.ticket) throw new Error("missing ws ticket");
+        wsUrl = `${protocol}//${host}/ws?ticket=${encodeURIComponent(ticketData.ticket)}`;
+      } catch (_) {
+        setWsConnected(false);
+        scheduleReconnect();
+        return;
+      }
+
+      if (closed) return;
+      try { ws = new WebSocket(wsUrl); } catch (_) { setWsConnected(false); scheduleReconnect(); return; }
       ws.onopen = () => { attempt = 0; setWsConnected(true); };
       ws.onclose = () => {
         setWsConnected(false);
-        if (closed) return;
-        const delay = Math.min(1000 * 2 ** attempt, 15000);
-        attempt += 1;
-        retryTimer = setTimeout(connect, delay);
+        scheduleReconnect();
       };
       ws.onerror = () => { try { ws.close(); } catch (_) { } };
       ws.onmessage = (e) => {
@@ -7272,7 +7405,12 @@ function AppShell({ session, onLogout, onSessionExpired, onTokensRefreshed, them
           if (data.event === "new_message") {
             setUnreadMessages((prev) => prev + 1);
           }
-          if (data.event) setLiveEvents((prev) => [{ ...data, _receivedAt: Date.now() }, ...prev].slice(0, 50));
+          if (data.event) {
+            setLiveEvents((prev) => [
+              { ...data, _receivedAt: Date.now(), _eventSeq: (prev[0]?._eventSeq || 0) + 1 },
+              ...prev,
+            ].slice(0, 50));
+          }
         } catch (_) { /* ignore heartbeat/ping frames */ }
       };
     };
@@ -7617,6 +7755,7 @@ function AppShell({ session, onLogout, onSessionExpired, onTokensRefreshed, them
                 targetActionItem={targetActionItem}
                 onClearTargetActionItem={() => setTargetActionItem(null)}
                 liveEvents={liveEvents}
+                readOnly={!isSuperAdmin}
               />
             )}
             {view === "tickets" && !isAdmin && (
@@ -7716,6 +7855,26 @@ export default function HeartBeatApp() {
     setSessionMessage(message);
     setSession(null);
   };
+
+  // Synchronize rotated access/refresh tokens or logouts across open browser tabs.
+  useEffect(() => {
+    const onStorage = (e) => {
+      if (e.key !== SESSION_KEY) return;
+      if (!e.newValue) {
+        setSessionMessage("Your session was signed out in another tab.");
+        setSession(null);
+        return;
+      }
+      try {
+        const synced = JSON.parse(e.newValue);
+        if (synced && synced.token) {
+          setSession(synced);
+        }
+      } catch (_) { /* ignore malformed storage payload */ }
+    };
+    window.addEventListener("storage", onStorage);
+    return () => window.removeEventListener("storage", onStorage);
+  }, []);
 
   // Called whenever the access/refresh tokens are renewed — by the proactive
   // pre-expiry timer in AppShell, or by useApi's reactive 401-retry path.

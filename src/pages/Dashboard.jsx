@@ -60,9 +60,17 @@ export default function Dashboard({ api, wsStatus, liveEvents, role, session }) 
         }
     }, [api, department, effectiveClientId]);
 
+    const latestEventKey = liveEvents[0]?._eventSeq ?? liveEvents[0]?._receivedAt ?? liveEvents.length;
+    const prevWsStatusRef = React.useRef(wsStatus);
     useEffect(() => { setLoading(true); load(); }, [load]);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-    useEffect(() => { load(); }, [liveEvents.length]);
+    useEffect(() => { if (latestEventKey) load(); }, [latestEventKey]);
+    useEffect(() => {
+        if (prevWsStatusRef.current !== "live" && wsStatus === "live") {
+            load();
+        }
+        prevWsStatusRef.current = wsStatus;
+    }, [wsStatus, load]);
 
     const { today, delta, deltaTone } = deriveTodayRuns(runTrendRaw, todayKey(), yesterdayKey());
 

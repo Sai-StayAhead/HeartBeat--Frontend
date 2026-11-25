@@ -21,17 +21,22 @@ export function decodeJwtExpiryMs(token) {
  */
 export function useApi(baseUrl, session, onTokensRefreshed, onUnauthorized, onRateLimited) {
   const refreshingRef = useRef(null);
+  const refreshTokenRef = useRef(session.refreshToken);
+  refreshTokenRef.current = session.refreshToken;
 
   const doRefresh = useCallback(async () => {
     if (refreshingRef.current) return refreshingRef.current;
+    const currentRefreshToken = refreshTokenRef.current;
+    if (!currentRefreshToken) throw new Error("no refresh token");
     refreshingRef.current = (async () => {
       const res = await fetch(`${baseUrl}/auth/refresh`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ refresh_token: session.refreshToken }),
+        body: JSON.stringify({ refresh_token: currentRefreshToken }),
       });
       if (!res.ok) throw new Error("refresh failed");
       const data = await res.json();
+      refreshTokenRef.current = data.refresh_token;
       onTokensRefreshed(data.access_token, data.refresh_token);
       return data.access_token;
     })();
@@ -40,7 +45,7 @@ export function useApi(baseUrl, session, onTokensRefreshed, onUnauthorized, onRa
     } finally {
       refreshingRef.current = null;
     }
-  }, [baseUrl, session.refreshToken, onTokensRefreshed]);
+  }, [baseUrl, onTokensRefreshed]);
 
   const request = useCallback(
     async (path, options = {}, token, isRetry = false) => {
